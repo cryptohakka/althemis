@@ -26,6 +26,8 @@ Althemis therefore splits every signal into two layers:
 
 A Provider can be wrong and survive. A Provider cannot lie and survive.
 
+**Althemis insures honesty, not alpha.**
+
 ## Architecture
 
 ```
@@ -52,14 +54,14 @@ Provider (FR / OI / Regime)          Consumer (Council)
 - **Provider** — sells signals. Onboards in a single transaction (bond + registry). Posts a USDC bond whose required ratio depends on tier (see below). New Providers are capped at 1 USDC exposure for their first 10 jobs.
 - **Consumer** — buys signals and integrates them through a Triple-A Council (Architect / Auditor / Arbiter debate) before acting. Payment = participation; no separate registration step.
 - **Adjudicator** — operator-run in v1; invoked **only** on disputes, which are restricted to attestation fraud claims. Dispute filing requires a bond equal to 50% of the Provider's bond, to deter spam.
-- **Price Oracle** — fetches public data from 6 CEXs, computes median ± MAD, confirms predictions after the signal-type-specific window, executes slashes, and updates tiers.
+- **Price Oracle** — two-phase. **Phase A (attestation)**: within 15 minutes of submission, verifies the attested value against the 6-CEX median ± MAD; the fabrication threshold is `max(3×MAD, 0.0001)`. Requires a 4-of-6 CEX quorum — below quorum it retries, and if the verification window expires the job is marked **unverifiable** and settles COMPLETE with no slash and no tier impact. **Phase B (prediction)**: after the signal-type window (e.g. 8h for FR), scores directional correctness against confirmed funding data and updates tiers. Neutral signals and results inside the no-contest band are not scored.
 
 ### Signal types & settlement rules
 
 | Signal | Confirmation window | No-contest band | Bond |
 |---|---|---|---|
-| **Funding Rate (FR)** | 8h | ±0.5σ (too close to call → no tier impact) | Yes |
-| **Open Interest (OI)** | 4h | ±0.3% | Yes |
+| **Funding Rate (FR)** | 8h | ±0.5×MAD (too close to call → does not consume a tier-window slot) | Yes |
+| **Open Interest (OI)** | 4h | ±0.3% | Yes — **attestation verification deferred in v1** (see Limitations) |
 | **Regime** | Rule-based settlement: volatility percentile 70/30 + 8h trend | — | **No bond** (Adjudicator-reviewed) |
 
 Regime classification is inherently interpretive, so it carries no bond and no automated slash — it lives entirely in the reputation domain, with the Adjudicator as backstop.
@@ -78,9 +80,30 @@ When an attestation is proven fabricated: **60%** to the harmed Consumer(s), **2
 ## Status
 
 - ✅ End-to-end flow verified on Arc Testnet: honest job settled COMPLETE; fabricated-data job detected and SLASHED.
-- ✅ Automated pipeline live under systemd (`althemis.service`): Council consumer cycle + Provider job submission run unattended.
-- ✅ Live job in flight: FR signal awaiting 8h oracle confirmation.
+- ✅ Two-phase oracle live: attestation VERIFIED in production (job #5, `medianAtAttest` / `madAtAttest` recorded on disk), and the `unverifiable` quorum-failure path exercised end-to-end (job #4 — settles COMPLETE with no slash, no tier impact).
+- ✅ Automated pipeline under systemd: `althemis.service` (Council consumer cycle + Provider job submission) and `althemis-oracle.service` (two-phase settlement) run unattended, with oracle state persisted across restarts.
 - 🔜 Public Provider onboarding, dashboard at `althemis.a2aflow.space`.
+
+## Known Limitations & Roadmap
+
+### Deliberate design choices (not bugs)
+
+- **Fabrication threshold = `max(3×MAD, 0.0001)`.** In low-volatility regimes MAD collapses toward zero, which would make a pure 3×MAD rule slash honest Providers whose aggregation method merely differs from the oracle's. The absolute floor guarantees that only unambiguous fabrication is punished — consistent with the core principle that punishment must stay deterministic. Live example: job #5 attested FR `6.51e-6` against an oracle median of `1.47e-5`; a deviation of `8.2e-6` against a floor-dominated threshold of `1e-4` → VERIFIED.
+- **Quorum 4/6 with `unverifiable` fallback.** If fewer than 4 of 6 CEXs respond, the oracle retries; if the attestation freshness window (15 min) expires, the job settles COMPLETE with **no slash and no tier impact**. The protocol never punishes what it could not verify. Live example: job #4.
+- **No-contest band (±0.5×MAD) does not consume a tier-window slot.** A Provider who hugs the median earns no reputation from it — this closes the band-hugging strategy where a Provider farms tier accuracy by submitting values indistinguishable from consensus.
+- **Regime signals carry no bond.** Regime classification is interpretive; it lives entirely in the reputation domain with the Adjudicator as backstop.
+
+### v1 scope cuts
+
+- **OI attestation verification is deferred.** Open interest lacks a clean cross-exchange consensus value (OI is venue-local, not fungible across exchanges the way funding rates are comparable). Rather than auto-passing OI attestations — which would dilute the meaning of "verified" — OI jobs are held out of Phase A until a sound verification source is defined.
+- **Adjudicator is operator-run.** v1 uses a single operator-controlled Adjudicator, invoked only on attestation-fraud disputes. v2 roadmap: decentralize adjudication (committee or restaked-operator model), and extend dispute scope beyond attestation fraud only where a deterministic verification rule exists for the new claim type.
+
+### Roadmap
+
+1. Public Provider onboarding + dashboard (`althemis.a2aflow.space`)
+2. OI attestation verification source
+3. Adjudicator decentralization (v2)
+4. Multi-asset signals beyond BTC
 
 ## Tech stack
 
@@ -88,7 +111,7 @@ When an attestation is proven fabricated: **60%** to the harmed Consumer(s), **2
 - **Protocol layer** (`protocol/` — escrow, oracle, tier, arc): **TypeScript** via `tsx` with `allowJs`, so it interoperates with the existing JS agent layer without a migration.
 - **Agent layer** (`agents/`, `core/`): Node.js — Council debate, calibration, post-mortem modules reused from prior Triple-A systems.
 - **Market data**: 6 CEX public endpoints (no API keys required), median ± MAD aggregation.
-- **State**: `data/tiers.json`, `data/job_state.json`.
+- **State**: `data/tiers.json`, `data/job_state.json`, `data/oracle_state.json` (oracle confirmation windows survive process restarts without resetting).
 
 ## Design lineage
 
