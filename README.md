@@ -35,7 +35,8 @@ Provider (FR / OI / Regime)          Consumer (Council)
    │  signal + USDC bond                │  pays → instant participation
    │                                    │
    ▼                                    ▼
-        ERC-8004 registry + on-chain escrow (Arc Testnet, USDC)
+        ERC-8183 job marketplace core (external) + BondHook (this repo)
+                  (Arc Testnet, USDC escrow)
                           │
                           ▼
         Price Oracle (N-hour confirmation, 6-CEX public data)
@@ -53,7 +54,7 @@ Provider (FR / OI / Regime)          Consumer (Council)
 
 - **Provider** — sells signals. Onboards in a single transaction (bond + registry). Posts a USDC bond whose required ratio depends on tier (see below). New Providers are capped at 1 USDC exposure for their first 10 jobs.
 - **Consumer** — buys signals and integrates them through a Triple-A Council (Architect / Auditor / Arbiter debate) before acting. Payment = participation; no separate registration step.
-- **Adjudicator** — operator-run in v1; invoked **only** on disputes, which are restricted to attestation fraud claims. Dispute filing requires a bond equal to 50% of the Provider's bond, to deter spam.
+- **Adjudicator** — operator-run in v1; invoked **only** on disputes, which are restricted to attestation fraud claims. Dispute filing in v1 goes through the operator; permissionless filing (with a filer bond equal to 50% of the Provider's bond, to deter spam) ships in v2 together with the filer reward.
 - **Price Oracle** — two-phase. **Phase A (attestation)**: within 15 minutes of submission, verifies the attested value against the 6-CEX median ± MAD; the fabrication threshold is `max(3×MAD, 0.0001)`. Requires a 4-of-6 CEX quorum — below quorum it retries, and if the verification window expires the job is marked **unverifiable** and settles COMPLETE with no slash and no tier impact. **Phase B (prediction)**: after the signal-type window (e.g. 8h for FR), scores directional correctness against confirmed funding data and updates tiers. Neutral signals and results inside the no-contest band are not scored.
 
 ### Signal types & settlement rules
@@ -75,7 +76,9 @@ Regime classification is inherently interpretive, so it carries no bond and no a
 
 ### Slash distribution
 
-When an attestation is proven fabricated: **60%** to the harmed Consumer(s), **20%** to the dispute filer, **20%** to the protocol treasury.
+When an attestation is proven fabricated, the slashed bond is split **80% to the harmed Consumer(s), 20% to the protocol treasury** (as implemented in `BondHook.sol`).
+
+A 20% **dispute-filer reward** (target split: 60/20/20) is deliberately deferred to v2: in v1 the Adjudicator is operator-run and disputes are not permissionless, so a filer reward would have no functioning recipient role. It ships together with permissionless dispute filing — see Known Limitations & Roadmap.
 
 ## Status
 
@@ -95,19 +98,22 @@ When an attestation is proven fabricated: **60%** to the harmed Consumer(s), **2
 
 ### v1 scope cuts
 
+- **On-chain scope is deliberately thin.** This repository's only contract is `BondHook.sol` — bond custody, tier-based bond ratios, the new-provider exposure cap, and slash execution. The job lifecycle (create / fund / submit / settle) lives in an external **ERC-8183** job marketplace core deployed on Arc Testnet; Althemis hangs off it as a hook rather than re-implementing a registry. Dependency details (core contract address, ABI notes) are in `protocol/escrow.ts`.
+- **Dispute-filer reward (60/20/20 split) is deferred.** The implemented split is 80/20 (Consumer/treasury). The filer reward only makes sense once dispute filing is permissionless, which requires the v2 Adjudicator work below — shipping the reward before the role exists would be dead code in the critical slash path.
 - **OI attestation verification is deferred.** Open interest lacks a clean cross-exchange consensus value (OI is venue-local, not fungible across exchanges the way funding rates are comparable). Rather than auto-passing OI attestations — which would dilute the meaning of "verified" — OI jobs are held out of Phase A until a sound verification source is defined.
-- **Adjudicator is operator-run.** v1 uses a single operator-controlled Adjudicator, invoked only on attestation-fraud disputes. v2 roadmap: decentralize adjudication (committee or restaked-operator model), and extend dispute scope beyond attestation fraud only where a deterministic verification rule exists for the new claim type.
+- **Adjudicator is operator-run.** v1 uses a single operator-controlled Adjudicator, invoked only on attestation-fraud disputes. v2 roadmap: decentralize adjudication (committee or restaked-operator model), open dispute filing permissionlessly (50%-of-bond filer stake, 20% filer reward), and extend dispute scope beyond attestation fraud only where a deterministic verification rule exists for the new claim type.
 
 ### Roadmap
 
-1. Public Provider onboarding + dashboard (`althemis.a2aflow.space`)
-2. OI attestation verification source
-3. Adjudicator decentralization (v2)
-4. Multi-asset signals beyond BTC
+1. Foundry test suite for `BondHook.sol` (bond lock/unlock, slash + split, tier-based bond ratios, new-provider cap)
+2. Public Provider onboarding + dashboard (`althemis.a2aflow.space`)
+3. OI attestation verification source
+4. Adjudicator decentralization + permissionless dispute filing with filer reward (v2)
+5. Multi-asset signals beyond BTC
 
 ## Tech stack
 
-- **Chain**: Arc Testnet (Circle), USDC-native. Job lifecycle via an ERC-8004-style job/registry contract; since existing ACP tooling doesn't target Arc, contract interaction is done directly with **viem**. (Note: `getJob` returns a JSON-shaped tuple; the ABI for it is defined as a JSON fragment in `protocol/escrow.ts` rather than `parseAbi`.)
+- **Chain**: Arc Testnet (Circle), USDC-native. Job lifecycle runs on an external **ERC-8183** job marketplace core; the only contract in this repo is `BondHook.sol` (bond custody + slash execution), built with Foundry. Since existing ACP tooling doesn't target Arc, contract interaction is done directly with **viem**. (Note: the core's `getJob` returns a JSON-shaped tuple; its ABI is defined as a JSON fragment in `protocol/escrow.ts` rather than `parseAbi`.)
 - **Protocol layer** (`protocol/` — escrow, oracle, tier, arc): **TypeScript** via `tsx` with `allowJs`, so it interoperates with the existing JS agent layer without a migration.
 - **Agent layer** (`agents/`, `core/`): Node.js — Council debate, calibration, post-mortem modules reused from prior Triple-A systems.
 - **Market data**: 6 CEX public endpoints (no API keys required), median ± MAD aggregation.
