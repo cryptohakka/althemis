@@ -2,82 +2,131 @@
  * protocol/oracle.ts
  * Price Oracle — ERC-8183 evaluator for Althemis signal marketplace
  *
- * Per signal type (06-12 design):
- *   FR  attestation: N=8h window, no-contest if |submitted - median| < 0.5σ (MAD proxy)
- *   OI  attestation: N=4h window, no-contest if |submitted - median| < 0.3% OI
- *   Regime: rule-based settlement (vol pct70/30 + 8h trend), handled separately
+ * Two-phase design (principle: punishment is deterministic, reputation is probabilistic):
  *
- * Loop:
- *   1. Fetch all Submitted jobs
- *   2. For each job past N-hour confirmation window:
- *      a. Decode deliverable (keccak256 of "TYPE_ASSET_Nh=VALUE")
- *      b. Fetch current 6-CEX data and compute median ± MAD
- *      c. complete() if within threshold, slashJob() if outside
- *   3. Run tier updates via tier.ts
- *   4. Sleep POLL_INTERVAL
+ *   Phase A — ATTESTATION (immediate, deterministic):
+ *     On detecting a freshly Submitted job, verify the attested value against
+ *     live 6-CEX median. Fabrication → 100% slash. Verification failure
+ *     (quorum, API errors) NEVER slashes — it retries, and if the freshness
+ *     window expires, the job is marked unverifiable: no slash, no tier impact.
+ *
+ *   Phase B — PREDICTION (N-hour, probabilistic, tier only):
+ *     After the signal window (FR=8h, OI=4h), score the provider's
+ *     DIRECTIONAL claim (dir=long/short from their z-score model).
+ *     Provider is paid (complete) regardless of outcome — payment rewards
+ *     honest delivery, tier tracks skill.
+ *       - dir=neutral or legacy format (no dir) → no claim → not scored
+ *       - |realized - attested| <= 0.5 × MAD    → no-contest, not scored
+ *         (no-contest does NOT consume a tumbling-window slot, so
+ *          band-hugging is not a viable tier strategy)
+ *       - dir=short: realized < attested - band → win, else loss
+ *       - dir=long:  realized > attested + band → win, else loss
+ *
+ *   Fabrication threshold is deliberately GENEROUS: max(3 × MAD, floor).
+ *   Only values no exchange printed get slashed. z/dir are the provider's
+ *   interpretation — scored, never slashed.
+ *
+ *   REGIME signals: no bond, adjudicator-settled. Skipped here.
+ *   OI: per-CEX OI verification not yet implemented — jobs held, never
+ *   auto-passed (a placeholder pass would silently break the deterministic layer).
  */
 
 import 'dotenv/config';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { keccak256, toBytes, type Address, type Hex } from 'viem';
-import { getPublicClient } from './arc.js';
 import {
   getSubmittedJobs, completeJob, slashJob,
-  ERC8183_ADDRESS, ERC8183_ABI,
-  type Job, JobStatus,
+  ERC8183_ADDRESS,
+  type Job,
 } from './escrow.js';
 import { recordOutcome } from './tier.js';
 
 // ── Config ────────────────────────────────────────────────────
 const POLL_INTERVAL_MS = 5 * 60 * 1000;  // 5 min
 
-// Confirmation windows (ms)
-const FR_WINDOW_MS  = 8  * 60 * 60 * 1000; // 8h
-const OI_WINDOW_MS  = 4  * 60 * 60 * 1000; // 4h
+// Phase B confirmation windows (ms)
+const FR_WINDOW_MS = 8 * 60 * 60 * 1000; // 8h
+const OI_WINDOW_MS = 4 * 60 * 60 * 1000; // 4h
 
-// Attestation no-contest thresholds
-const FR_MAD_MULTIPLIER = 0.5;  // |submitted - median| < 0.5 × MAD
-const OI_THRESHOLD_PCT  = 0.003; // 0.3% absolute
+// Phase A: attestation must be verified while the fact is still live.
+const ATTESTATION_FRESHNESS_MS = 15 * 60 * 1000; // 15 min
+
+// Phase A: fabrication threshold (GENEROUS — slash only what no CEX printed)
+const FABRICATION_MAD_MULTIPLIER = 3;        // max(3 × MAD, floor)
+const FR_FABRICATION_FLOOR = 0.0001;         // 0.01% absolute FR floor
+const MIN_CEX_QUORUM = 4;                    // of 6 — below this, retry, never slash
+
+// Phase B: no-contest band (tier scoring only)
+const FR_NO_CONTEST_MAD_MULTIPLIER = 0.5;    // |realized - attested| < 0.5 × MAD
+const OI_NO_CONTEST_PCT = 0.003;             // 0.3% absolute
 
 // ── Signal types ──────────────────────────────────────────────
 type SignalType = 'FR' | 'OI' | 'REGIME';
+type Direction  = 'long' | 'short' | 'neutral';
 
 interface DeliveryDecoded {
   type:   SignalType;
-  asset:  string;       // e.g. "BTC"
-  window: string;       // e.g. "8h"
-  value:  number;       // e.g. 0.00032 (FR as decimal)
-  raw:    string;       // original string before hashing
+  asset:  string;
+  window: string;
+  value:  number;
+  z:      number | null;       // provider interpretation (scored, never slashed)
+  dir:    Direction | null;    // directional claim. null = legacy format
+  raw:    string;
 }
 
-/**
- * Deliverable format: "FR_BTC_8h=0.00032"
- * The Provider hashes this string and submits keccak256 as deliverable.
- * The oracle needs to know the preimage — in v1, Providers post the preimage
- * off-chain (e.g. via description or memo). For v1 simplicity we read it
- * from job.description field: "FR_BTC_8h=0.00032"
- */
 function decodeDelivery(description: string): DeliveryDecoded | null {
-  // Format: "TYPE_ASSET_Wh=VALUE"
-  const match = description.match(/^(FR|OI|REGIME)_([A-Z]+)_(\d+h)=(-?[\d.]+)$/);
+  const match = description.match(
+    /^(FR|OI|REGIME)_([A-Z]+)_(\d+h)=(-?[\d.]+)(?:;z=(-?[\d.]+))?(?:;dir=(long|short|neutral))?$/
+  );
   if (!match) return null;
   return {
     type:   match[1] as SignalType,
     asset:  match[2],
     window: match[3],
     value:  parseFloat(match[4]),
+    z:      match[5] !== undefined ? parseFloat(match[5]) : null,
+    dir:    (match[6] as Direction | undefined) ?? null,
     raw:    description,
   };
 }
 
+// ── Oracle state (data/oracle_state.json) ─────────────────────
+type AttestationStatus = 'verified' | 'unverifiable';
+
+interface JobOracleState {
+  jobId:          string;
+  provider:       Address;
+  signal:         string;
+  attestation:    AttestationStatus;
+  attestedValue:  number;
+  medianAtAttest: number | null;
+  madAtAttest:    number | null;
+  settleAtMs:     number;
+}
+
+const ORACLE_STATE_PATH = './data/oracle_state.json';
+type OracleStateDB = Record<string, JobOracleState>;
+
+function loadState(): OracleStateDB {
+  if (!existsSync(ORACLE_STATE_PATH)) return {};
+  return JSON.parse(readFileSync(ORACLE_STATE_PATH, 'utf-8')) as OracleStateDB;
+}
+
+function saveState(db: OracleStateDB): void {
+  mkdirSync('./data', { recursive: true });
+  writeFileSync(ORACLE_STATE_PATH, JSON.stringify(db, null, 2));
+}
+
 // ── 6-CEX data fetching ───────────────────────────────────────
-// Mirrors cex.js logic but in TypeScript, returns { median, mad }
+// NOTE: all endpoints return the LAST SETTLED funding rate (not predicted),
+// so the median compares like with like.
+
 interface CexFrData {
   exchange: string;
   rate: number;
 }
 
 async function fetch6CexFR(asset: string): Promise<CexFrData[]> {
-  // Exchanges: Binance, Bybit, Bitget, OKX, Gate, MEXC (public funding rate APIs)
   const symbol = `${asset}USDT`;
   const results: CexFrData[] = [];
 
@@ -98,31 +147,31 @@ async function fetch6CexFR(asset: string): Promise<CexFrData[]> {
     }],
     ['OKX', async () => {
       const r = await fetch(
-        `https://www.okx.com/api/v5/public/funding-rate?instId=${asset}-USDT-SWAP`
+        `https://www.okx.com/api/v5/public/funding-rate-history?instId=${asset}-USDT-SWAP&limit=1`
       );
       const d = await r.json() as any;
       return d?.data?.[0] ? parseFloat(d.data[0].fundingRate) : null;
     }],
     ['Bitget', async () => {
       const r = await fetch(
-        `https://api.bitget.com/api/v2/mix/market/current-fund-rate?symbol=${symbol}&productType=USDT-FUTURES`
+        `https://api.bitget.com/api/v2/mix/market/history-fund-rate?symbol=${symbol}&productType=USDT-FUTURES&pageSize=1`
       );
       const d = await r.json() as any;
       return d?.data?.[0] ? parseFloat(d.data[0].fundingRate) : null;
     }],
     ['Gate', async () => {
       const r = await fetch(
-        `https://api.gateio.ws/api/v4/futures/usdt/contracts/${asset}_USDT`
+        `https://api.gateio.ws/api/v4/futures/usdt/funding_rate?contract=${asset}_USDT&limit=1`
       );
-      const d = await r.json() as any;
-      return d?.funding_rate ? parseFloat(d.funding_rate) : null;
+      const d = await r.json() as any[];
+      return d?.[0]?.r ? parseFloat(d[0].r) : null;
     }],
     ['MEXC', async () => {
       const r = await fetch(
         `https://contract.mexc.com/api/v1/contract/funding_rate/${asset}_USDT`
       );
       const d = await r.json() as any;
-      return d?.data?.fundingRate ? parseFloat(d.data.fundingRate) : null;
+      return d?.data?.fundingRate !== undefined ? parseFloat(d.data.fundingRate) : null;
     }],
   ];
 
@@ -130,7 +179,7 @@ async function fetch6CexFR(asset: string): Promise<CexFrData[]> {
     fetchers.map(async ([name, fn]) => {
       try {
         const rate = await fn();
-        if (rate !== null) results.push({ exchange: name, rate });
+        if (rate !== null && Number.isFinite(rate)) results.push({ exchange: name, rate });
       } catch { /* skip failed exchange */ }
     })
   );
@@ -154,53 +203,80 @@ function medianMad(values: number[]): { median: number; mad: number } {
   return { median, mad };
 }
 
-// ── Verification logic ────────────────────────────────────────
+// ── Phase A: attestation verification ─────────────────────────
 
-interface VerifyResult {
-  pass:     boolean;
-  reason:   string;
-  verified: Hex;   // keccak256 of verification summary (used as complete() reason)
-}
+type AttestOutcome =
+  | { kind: 'pass'; median: number; mad: number }
+  | { kind: 'fabricated'; median: number; mad: number; diff: number; threshold: number }
+  | { kind: 'retry'; reason: string };   // quorum/API failure — never slash
 
-async function verifyFR(delivered: DeliveryDecoded): Promise<VerifyResult> {
-  const cexData = await fetch6CexFR(delivered.asset);
-  if (cexData.length < 3) {
-    return { pass: false, reason: `insufficient CEX data (${cexData.length})`, verified: '0x' as Hex };
+async function attestFR(decoded: DeliveryDecoded): Promise<AttestOutcome> {
+  const cexData = await fetch6CexFR(decoded.asset);
+  if (cexData.length < MIN_CEX_QUORUM) {
+    return { kind: 'retry', reason: `quorum ${cexData.length}/${MIN_CEX_QUORUM}` };
   }
 
-  const rates = cexData.map(d => d.rate);
-  const { median, mad } = medianMad(rates);
-  const diff  = Math.abs(delivered.value - median);
-  const threshold = mad * FR_MAD_MULTIPLIER;
+  const { median, mad } = medianMad(cexData.map(d => d.rate));
+  const diff      = Math.abs(decoded.value - median);
+  const threshold = Math.max(mad * FABRICATION_MAD_MULTIPLIER, FR_FABRICATION_FLOOR);
 
-  const summary = `FR_VERIFY:asset=${delivered.asset},submitted=${delivered.value},median=${median.toFixed(6)},mad=${mad.toFixed(6)},diff=${diff.toFixed(6)},threshold=${threshold.toFixed(6)}`;
-  const verified = keccak256(toBytes(summary)) as Hex;
+  console.log(
+    `[oracle][attest][FR] ${decoded.raw} | median=${median.toFixed(6)} mad=${mad.toFixed(6)} ` +
+    `diff=${diff.toFixed(6)} threshold=${threshold.toFixed(6)} ` +
+    `exchanges=${cexData.map(d => d.exchange).join(',')}`
+  );
 
-  const pass = diff <= threshold;
-  const reason = pass
-    ? `PASS: diff=${diff.toFixed(6)} <= threshold=${threshold.toFixed(6)}`
-    : `FAIL: diff=${diff.toFixed(6)} > threshold=${threshold.toFixed(6)}`;
-
-  console.log(`[oracle][FR] ${delivered.raw} | ${reason} | exchanges=${cexData.map(d => d.exchange).join(',')}`);
-  return { pass, reason, verified };
+  if (diff > threshold) {
+    return { kind: 'fabricated', median, mad, diff, threshold };
+  }
+  return { kind: 'pass', median, mad };
 }
 
-async function verifyOI(delivered: DeliveryDecoded): Promise<VerifyResult> {
-  // OI verification: compare against 6-CEX OI (simplified: use FR proxy for now)
-  // TODO: implement actual OI fetching per-CEX
-  // For v1: pass if submitted value is within 0.3% of a reference
-  // Placeholder — replace with actual OI data
-  const summary = `OI_VERIFY:asset=${delivered.asset},submitted=${delivered.value},status=PLACEHOLDER`;
-  const verified = keccak256(toBytes(summary)) as Hex;
-  console.log(`[oracle][OI] ${delivered.raw} | PLACEHOLDER verification`);
-  return { pass: true, reason: 'OI v1 placeholder: auto-pass', verified };
+// ── Phase B: prediction settlement ────────────────────────────
+
+type PredictOutcome =
+  | { kind: 'win' | 'loss'; detail: string }
+  | { kind: 'no_contest'; detail: string }   // excluded from tier window
+  | { kind: 'retry'; reason: string };
+
+/**
+ * FR prediction rule (directional):
+ *   dir=short → claims FR will fall: realized < attested - band → win
+ *   dir=long  → claims FR will rise: realized > attested + band → win
+ *   dir=neutral / legacy (no dir)   → no claim → not scored
+ *   |realized - attested| <= band   → no-contest
+ */
+async function settleFRPrediction(
+  decoded: DeliveryDecoded,
+  state: JobOracleState,
+): Promise<PredictOutcome> {
+  if (!decoded.dir || decoded.dir === 'neutral') {
+    return { kind: 'no_contest', detail: 'no directional claim' };
+  }
+
+  const cexData = await fetch6CexFR(decoded.asset);
+  if (cexData.length < MIN_CEX_QUORUM) {
+    return { kind: 'retry', reason: `quorum ${cexData.length}/${MIN_CEX_QUORUM}` };
+  }
+
+  const { median: realized, mad } = medianMad(cexData.map(d => d.rate));
+  const attested = state.attestedValue;
+  const band     = mad * FR_NO_CONTEST_MAD_MULTIPLIER;
+  const moved    = realized - attested;
+
+  const detail =
+    `dir=${decoded.dir} attested=${attested.toFixed(6)} realized=${realized.toFixed(6)} ` +
+    `moved=${moved.toFixed(6)} band=${band.toFixed(6)}`;
+
+  if (Math.abs(moved) <= band) return { kind: 'no_contest', detail };
+
+  const correct = decoded.dir === 'short' ? moved < 0 : moved > 0;
+  return { kind: correct ? 'win' : 'loss', detail };
 }
 
-// ── Confirmation window check ─────────────────────────────────
-function isPastConfirmationWindow(job: Job, signalType: SignalType): boolean {
-  const submitTimeMs = Number(job.submittedAt) * 1000;
-  const windowMs     = signalType === 'OI' ? OI_WINDOW_MS : FR_WINDOW_MS;
-  return Date.now() >= submitTimeMs + windowMs;
+// ── Window helpers ────────────────────────────────────────────
+function windowMsFor(type: SignalType): number {
+  return type === 'OI' ? OI_WINDOW_MS : FR_WINDOW_MS;
 }
 
 // ── Main oracle loop ──────────────────────────────────────────
@@ -211,69 +287,147 @@ async function processJobs(): Promise<void> {
     return;
   }
 
-  console.log(`[oracle] ${jobs.length} submitted job(s) to evaluate`);
+  console.log(`[oracle] ${jobs.length} submitted job(s)`);
+  const state = loadState();
 
   for (const job of jobs) {
-    // Decode signal from description
     const decoded = decodeDelivery(job.description);
     if (!decoded) {
-      console.warn(`[oracle] job #${job.jobId}: unrecognized description format: ${job.description}`);
+      console.warn(`[oracle] job #${job.jobId}: unrecognized description: ${job.description}`);
+      continue;
+    }
+    if (decoded.type === 'REGIME') {
+      console.log(`[oracle] job #${job.jobId}: REGIME — adjudicator-settled, skipping`);
+      continue;
+    }
+    if (decoded.type === 'OI') {
+      console.log(`[oracle] job #${job.jobId}: OI — verification not implemented, holding`);
       continue;
     }
 
-    // Check confirmation window
-    if (!isPastConfirmationWindow(job, decoded.type)) {
-      const submitTimeMs = Number(job.submittedAt) * 1000;
-      const windowMs     = decoded.type === 'OI' ? OI_WINDOW_MS : FR_WINDOW_MS;
-      const remainMs     = (submitTimeMs + windowMs) - Date.now();
-      console.log(`[oracle] job #${job.jobId}: waiting ${(remainMs / 3600000).toFixed(1)}h for confirmation`);
-      continue;
-    }
+    const key = job.jobId.toString();
+    const submitTimeMs = Number(job.submittedAt) * 1000;
+    const ageMs = Date.now() - submitTimeMs;
 
-    // Verify signal
-    let result: VerifyResult;
-    try {
-      if (decoded.type === 'FR') {
-        result = await verifyFR(decoded);
-      } else if (decoded.type === 'OI') {
-        result = await verifyOI(decoded);
+    // ── Phase A: attestation (only once, while fresh) ──
+    if (!state[key]) {
+      if (ageMs <= ATTESTATION_FRESHNESS_MS) {
+        const result = await attestFR(decoded);
+
+        if (result.kind === 'retry') {
+          console.log(`[oracle] job #${key}: attestation retry (${result.reason})`);
+          continue; // NEVER slash on verification failure
+        }
+
+        if (result.kind === 'fabricated') {
+          try {
+            const txHash = await slashJob(job.jobId);
+            console.log(
+              `[oracle] job #${key}: SLASH ✗ fabricated attestation ` +
+              `diff=${result.diff.toFixed(6)} > threshold=${result.threshold.toFixed(6)} tx=${txHash}`
+            );
+            // Deterministic punishment only — no recordOutcome.
+          } catch (err) {
+            console.error(`[oracle] job #${key}: slash tx failed:`, err);
+          }
+          continue;
+        }
+
+        // pass
+        state[key] = {
+          jobId: key,
+          provider: job.provider,
+          signal: decoded.raw,
+          attestation: 'verified',
+          attestedValue: decoded.value,
+          medianAtAttest: result.median,
+          madAtAttest: result.mad,
+          settleAtMs: submitTimeMs + windowMsFor(decoded.type),
+        };
+        saveState(state);
+        console.log(`[oracle] job #${key}: attestation VERIFIED, settles in ${(windowMsFor(decoded.type) / 3600000).toFixed(0)}h`);
+        continue;
       } else {
-        console.log(`[oracle] job #${job.jobId}: REGIME type — handled by adjudicator`);
+        // Missed the freshness window (oracle downtime). Fail-safe:
+        // cannot prove fabrication against live data → no slash, no tier impact.
+        state[key] = {
+          jobId: key,
+          provider: job.provider,
+          signal: decoded.raw,
+          attestation: 'unverifiable',
+          attestedValue: decoded.value,
+          medianAtAttest: null,
+          madAtAttest: null,
+          settleAtMs: submitTimeMs + windowMsFor(decoded.type),
+        };
+        saveState(state);
+        console.warn(`[oracle] job #${key}: attestation UNVERIFIABLE (age ${(ageMs / 60000).toFixed(0)}min) — will settle without tier impact`);
         continue;
       }
-    } catch (err) {
-      console.error(`[oracle] job #${job.jobId}: verification error:`, err);
+    }
+
+    // ── Phase B: prediction settlement ──
+    const js = state[key];
+    if (Date.now() < js.settleAtMs) {
+      const remainH = (js.settleAtMs - Date.now()) / 3600000;
+      console.log(`[oracle] job #${key}: waiting ${remainH.toFixed(1)}h for settlement`);
       continue;
     }
 
-    // Settle
-    try {
-      if (result.pass) {
-        const txHash = await completeJob(job.jobId, result.verified);
-        console.log(`[oracle] job #${job.jobId}: COMPLETE ✓ tx=${txHash}`);
-        await recordOutcome(job.provider, job.jobId, 'win');
-      } else {
-        // False attestation: slash
-        const txHash = await slashJob(job.jobId);
-        console.log(`[oracle] job #${job.jobId}: SLASH ✗ tx=${txHash} reason=${result.reason}`);
-        await recordOutcome(job.provider, job.jobId, 'loss');
+    // Unverifiable attestation: complete (pay), no tier impact.
+    if (js.attestation === 'unverifiable') {
+      try {
+        const reason = keccak256(toBytes(`SETTLE:unverifiable:${js.signal}`)) as Hex;
+        const txHash = await completeJob(job.jobId, reason);
+        console.log(`[oracle] job #${key}: COMPLETE (unverifiable, no tier impact) tx=${txHash}`);
+        delete state[key];
+        saveState(state);
+      } catch (err) {
+        console.error(`[oracle] job #${key}: complete tx failed:`, err);
       }
+      continue;
+    }
+
+    let outcome: PredictOutcome;
+    try {
+      outcome = await settleFRPrediction(decoded, js);
     } catch (err) {
-      console.error(`[oracle] job #${job.jobId}: settlement tx failed:`, err);
+      console.error(`[oracle] job #${key}: prediction settlement error:`, err);
+      continue;
+    }
+    if (outcome.kind === 'retry') {
+      console.log(`[oracle] job #${key}: settlement retry (${outcome.reason})`);
+      continue;
+    }
+
+    // Honest provider → always paid. Tier reflects skill.
+    try {
+      const reason = keccak256(toBytes(`SETTLE:${outcome.kind}:${outcome.detail}`)) as Hex;
+      const txHash = await completeJob(job.jobId, reason);
+      console.log(`[oracle] job #${key}: COMPLETE (${outcome.kind}) ${outcome.detail} tx=${txHash}`);
+
+      if (outcome.kind === 'win' || outcome.kind === 'loss') {
+        await recordOutcome(job.provider, job.jobId, outcome.kind);
+      }
+      // no_contest: NOT recorded — does not consume a tumbling-window slot.
+
+      delete state[key];
+      saveState(state);
+    } catch (err) {
+      console.error(`[oracle] job #${key}: settlement tx failed:`, err);
     }
   }
 }
 
 async function main(): Promise<void> {
-  console.log('[oracle] Althemis Price Oracle starting');
+  console.log('[oracle] Althemis Price Oracle starting (two-phase, directional scoring)');
   console.log(`[oracle] ERC8183=${ERC8183_ADDRESS}`);
-  console.log(`[oracle] poll=${POLL_INTERVAL_MS / 60000}min`);
+  console.log(`[oracle] poll=${POLL_INTERVAL_MS / 60000}min, attestation freshness=${ATTESTATION_FRESHNESS_MS / 60000}min`);
+  console.log(`[oracle] fabrication=max(${FABRICATION_MAD_MULTIPLIER}×MAD, ${FR_FABRICATION_FLOOR}), no-contest=${FR_NO_CONTEST_MAD_MULTIPLIER}×MAD, quorum=${MIN_CEX_QUORUM}/6`);
 
-  // Validate env
   if (!ERC8183_ADDRESS) throw new Error('ERC8183_ADDRESS not set');
   if (!process.env.ORACLE_PRIVATE_KEY) throw new Error('ORACLE_PRIVATE_KEY not set');
 
-  // Run immediately then poll
   await processJobs();
   setInterval(processJobs, POLL_INTERVAL_MS);
 }

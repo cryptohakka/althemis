@@ -48,7 +48,13 @@ async function writeTx(client, req) {
 }
 
 // ── Provider Job submit ────────────────────────────────────────
-async function submitProviderJob(avgFR) {
+async function submitProviderJob(frSig) {
+  const SUBMIT_NEUTRAL = process.env.SUBMIT_NEUTRAL !== 'false'; // testnet default: true
+  if (frSig.direction === 'neutral' && !SUBMIT_NEUTRAL) {
+    console.log('[provider-job] neutral signal — skip (SUBMIT_NEUTRAL=false)');
+    return;
+  }
+
   const state = loadJobState();
 
   // アクティブな job があればスキップ
@@ -81,8 +87,8 @@ async function submitProviderJob(avgFR) {
   }
 
   // description: oracle.ts の decodeDelivery 形式
-  const frValue     = parseFloat(avgFR.toFixed(8));
-  const description = `FR_BTC_8h=${frValue}`;
+  const frValue     = parseFloat(frSig.avgFR.toFixed(8));
+  const description = `FR_BTC_8h=${frValue};z=${frSig.frZ};dir=${frSig.direction}`;
   const deliverable = keccak256(toBytes(description));
   const expiredAt   = Math.floor(Date.now() / 1000) + 86400;
 
@@ -133,12 +139,11 @@ async function runCycle() {
     const verdict = await runConsumerCycle(signals);
     console.log(`[main] done — action=${verdict.action} conf=${verdict.confidence} cal=${verdict.calibrated} DI=${verdict.disagreementIndex}`);
 
-    // FR の avgFR を provider job として submit
-    const frHistory = existsSync(FR_HISTORY_FILE)
-      ? JSON.parse(readFileSync(FR_HISTORY_FILE, 'utf-8'))
-      : [];
-    if (frHistory.length > 0) {
-      await submitProviderJob(frHistory[0]);
+    // FR providerシグナルをそのままjob化(direction/frZ込み)
+    if (signals.fr.baselineReady) {
+      await submitProviderJob(signals.fr);
+    } else {
+      console.log('[provider-job] FR baseline not ready — skip');
     }
   } catch (e) {
     console.error('[main] cycle error:', e.message);
