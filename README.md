@@ -85,9 +85,13 @@ A 20% **dispute-filer reward** (target split: 60/20/20) is deliberately deferred
 - ✅ End-to-end flow verified on Arc Testnet: honest job settled COMPLETE; fabricated-data job detected and SLASHED.
 - ✅ Two-phase oracle live: attestation VERIFIED in production (job #5, `medianAtAttest` / `madAtAttest` recorded on disk), and the `unverifiable` quorum-failure path exercised end-to-end (job #4 — settles COMPLETE with no slash, no tier impact).
 - ✅ Automated pipeline under systemd: `althemis.service` (Council consumer cycle + Provider job submission) and `althemis-oracle.service` (two-phase settlement) run unattended, with oracle state persisted across restarts.
-- ✅ Settlement transactions on Arc Testnet:
-  - job #4 — `unverifiable` COMPLETE (no slash, no tier impact): [`0x1a8bfd15...`](https://explorer.arc.fun/tx/0x1a8bfd15239626dec9e0da1df7a1088327282c169f23ea95acb11b798c62113e)
-  - job #5 — `no_contest` COMPLETE (neutral signal, tier window not consumed): [`0xf11f5b1b...`](https://explorer.arc.fun/tx/0xf11f5b1b6bd2d6028a5cedfa66b2edc2618f8b9c87b333f97944e0c84a635d72)
+- ✅ Settlement transactions on Arc Testnet, all under the same Phase A threshold `max(3×MAD, 0.0001)`:
+  - job #5 — attestation VERIFIED (honest FR `6.51e-6`, deviation well inside threshold): the prediction later settled `no_contest` (neutral signal): [`0xf11f5b1b...`](https://explorer.arc.fun/tx/0xf11f5b1b6bd2d6028a5cedfa66b2edc2618f8b9c87b333f97944e0c84a635d72)
+  - job #7 — **fabricated attestation SLASHED** (`FR_BTC_8h=0.005` vs median `4.1e-5`, diff `4.96e-3` > threshold `1.03e-4`): [`0x3bb7ddac...`](https://explorer.arc.fun/tx/0x3bb7ddaccd221f6fbe673791ebc12c5f8e415fb0229cf11512460dbf7927dfbb)
+  - job #4 — `unverifiable` COMPLETE (quorum-failure fallback, no slash, no tier impact): [`0x1a8bfd15...`](https://explorer.arc.fun/tx/0x1a8bfd15239626dec9e0da1df7a1088327282c169f23ea95acb11b798c62113e)
+
+  Jobs #5 and #7 are the core demonstration: under one identical threshold, an honest value survives and a fabricated value is slashed 100% of bond. *A Provider can be wrong and survive; a Provider cannot lie and survive.*
+- ✅ `BondHook.sol` Foundry test suite: 19 tests passing — bond lock/unlock/withdraw, `beforeFund` coverage + new-provider caps, tier-based bond ratios (200/150/100%), slash 80/20 split with event/balance assertions, and the non-slash reject path (unverifiable settlement). Run with `forge test --match-path "contracts/test/BondHook.t.sol"`.
 - 🔜 Public Provider onboarding, dashboard at `althemis.a2aflow.space`.
 
 ## Known Limitations & Roadmap
@@ -96,7 +100,7 @@ A 20% **dispute-filer reward** (target split: 60/20/20) is deliberately deferred
 
 - **Fabrication threshold = `max(3×MAD, 0.0001)`.** In low-volatility regimes MAD collapses toward zero, which would make a pure 3×MAD rule slash honest Providers whose aggregation method merely differs from the oracle's. The absolute floor guarantees that only unambiguous fabrication is punished — consistent with the core principle that punishment must stay deterministic. Live example: job #5 attested FR `6.51e-6` against an oracle median of `1.47e-5`; a deviation of `8.2e-6` against a floor-dominated threshold of `1e-4` → VERIFIED.
 - **Quorum 4/6 with `unverifiable` fallback.** If fewer than 4 of 6 CEXs respond, the oracle retries; if the attestation freshness window (15 min) expires, the job settles COMPLETE with **no slash and no tier impact**. The protocol never punishes what it could not verify. Live example: job #4.
-- **No-contest band (±0.5×MAD) does not consume a tier-window slot.** A Provider who hugs the median earns no reputation from it — this closes the band-hugging strategy where a Provider farms tier accuracy by submitting values indistinguishable from consensus.
+- **No-contest band (±0.5×MAD) does not consume a tier-window slot.** A Provider who hugs the median earns no reputation from it — and because no-contest jobs are excluded from the 20-job window denominator entirely, a Provider cannot graduate to Silver/Gold on neutral signals alone. This closes the band-hugging strategy where a Provider farms tier accuracy by submitting values indistinguishable from consensus: such submissions are reputation-neutral, not reputation-positive.
 - **Regime signals carry no bond.** Regime classification is interpretive; it lives entirely in the reputation domain with the Adjudicator as backstop.
 
 ### v1 scope cuts
@@ -108,7 +112,7 @@ A 20% **dispute-filer reward** (target split: 60/20/20) is deliberately deferred
 
 ### Roadmap
 
-1. Foundry test suite for `BondHook.sol` (bond lock/unlock, slash + split, tier-based bond ratios, new-provider cap)
+1. ✅ Foundry test suite for `BondHook.sol` (bond lock/unlock, slash + split, tier-based bond ratios, new-provider cap) — **done, 19 tests passing**
 2. Public Provider onboarding + dashboard (`althemis.a2aflow.space`)
 3. OI attestation verification source
 4. Adjudicator decentralization + permissionless dispute filing with filer reward (v2)
@@ -120,7 +124,7 @@ A 20% **dispute-filer reward** (target split: 60/20/20) is deliberately deferred
 - **Protocol layer** (`protocol/` — escrow, oracle, tier, arc): **TypeScript** via `tsx` with `allowJs`, so it interoperates with the existing JS agent layer without a migration.
 - **Agent layer** (`agents/`, `core/`): Node.js — Council debate, calibration, post-mortem modules reused from prior Triple-A systems.
 - **Market data**: 6 CEX public endpoints (no API keys required), median ± MAD aggregation.
-- **State**: `data/tiers.json`, `data/job_state.json`, `data/oracle_state.json` (oracle confirmation windows survive process restarts without resetting).
+- **State**: `data/tiers.json`, `data/job_state.json`, `data/oracle_state.json`. The oracle discovers work by scanning on-chain job status and persists confirmation windows, so it resumes across restarts without resetting timers.
 
 ## Design lineage
 
