@@ -32,7 +32,7 @@
  */
 
 import 'dotenv/config';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync } from 'fs';
 import { keccak256, toBytes, type Address, type Hex } from 'viem';
 import {
   getSubmittedJobs, completeJob, slashJob,
@@ -115,6 +115,25 @@ function loadState(): OracleStateDB {
 function saveState(db: OracleStateDB): void {
   mkdirSync('./data', { recursive: true });
   writeFileSync(ORACLE_STATE_PATH, JSON.stringify(db, null, 2));
+}
+
+// Append-only event ledger - durable, journald-independent record of every
+// terminal oracle decision. One JSON object per line. Consumed by
+// tools/oracle_metrics.py (--events ./data/events.jsonl).
+const EVENTS_PATH = './data/events.jsonl';
+function logEvent(e: {
+  phase: 'A' | 'B';
+  jobId: string;
+  outcome: string;            // verified | unverifiable | slashed | win | loss | no_contest
+  tx?: string | null;
+  detail?: string;
+}): void {
+  try {
+    mkdirSync('./data', { recursive: true });
+    appendFileSync(EVENTS_PATH, JSON.stringify({ ts: new Date().toISOString(), ...e }) + '\n');
+  } catch (err) {
+    console.error('[oracle] event ledger append failed:', err);
+  }
 }
 
 // ── 6-CEX data fetching ───────────────────────────────────────
@@ -326,6 +345,8 @@ async function processJobs(): Promise<void> {
               `[oracle] job #${key}: SLASH ✗ fabricated attestation ` +
               `diff=${result.diff.toFixed(6)} > threshold=${result.threshold.toFixed(6)} tx=${txHash}`
             );
+            logEvent({ phase: 'A', jobId: key, outcome: 'slashed', tx: txHash,
+                       detail: `diff=${result.diff.toFixed(6)} threshold=${result.threshold.toFixed(6)}` });
             // Deterministic punishment only — no recordOutcome.
           } catch (err) {
             console.error(`[oracle] job #${key}: slash tx failed:`, err);
@@ -346,6 +367,7 @@ async function processJobs(): Promise<void> {
         };
         saveState(state);
         console.log(`[oracle] job #${key}: attestation VERIFIED, settles in ${(windowMsFor(decoded.type) / 3600000).toFixed(0)}h`);
+        logEvent({ phase: 'A', jobId: key, outcome: 'verified', detail: decoded.raw });
         continue;
       } else {
         // Missed the freshness window (oracle downtime). Fail-safe:
@@ -380,6 +402,7 @@ async function processJobs(): Promise<void> {
         const reason = keccak256(toBytes(`SETTLE:unverifiable:${js.signal}`)) as Hex;
         const txHash = await completeJob(job.jobId, reason);
         console.log(`[oracle] job #${key}: COMPLETE (unverifiable, no tier impact) tx=${txHash}`);
+        logEvent({ phase: 'A', jobId: key, outcome: 'unverifiable', tx: txHash });
         delete state[key];
         saveState(state);
       } catch (err) {
@@ -405,6 +428,7 @@ async function processJobs(): Promise<void> {
       const reason = keccak256(toBytes(`SETTLE:${outcome.kind}:${outcome.detail}`)) as Hex;
       const txHash = await completeJob(job.jobId, reason);
       console.log(`[oracle] job #${key}: COMPLETE (${outcome.kind}) ${outcome.detail} tx=${txHash}`);
+      logEvent({ phase: 'B', jobId: key, outcome: outcome.kind, tx: txHash, detail: outcome.detail });
 
       if (outcome.kind === 'win' || outcome.kind === 'loss') {
         await recordOutcome(job.provider, job.jobId, outcome.kind);
