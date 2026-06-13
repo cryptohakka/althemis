@@ -40,7 +40,8 @@ interface IERC8183Core {
 // Flow:
 //   Provider deposits USDC bond → beforeFund checks coverage
 //   afterFund locks bond per job → afterComplete unlocks + wins
-//   afterReject: if SLASH_REASON → slash 60/20/20, else unlock
+//   afterReject: if SLASH_REASON → slash 80/20 (consumer/treasury), else unlock
+//   v2: 60/20/20 with permissionless filer reward
 //
 // Tier (set by oracle after each 20-job window):
 //   Bronze: bond = 200% × budget
