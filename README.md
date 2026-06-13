@@ -71,7 +71,7 @@ Regime classification is inherently interpretive, so it carries no bond and no a
 
 - **Window**: tumbling window of 20 settled jobs (not rolling — each window is evaluated once, preventing one bad streak from being double-counted).
 - **Promotion**: 60% accuracy → Silver, 72% → Gold.
-- **Demotion**: two consecutive windows at −5% below threshold.
+- **Demotion**: two consecutive windows with win-rate below 45%.
 - **What tier buys you**: required bond ratio of **200% (Bronze) / 150% (Silver) / 100% (Gold)** of signal exposure, plus marketplace display priority. Reputation literally lowers your cost of capital.
 
 ### Slash distribution
@@ -100,7 +100,7 @@ A 20% **dispute-filer reward** (target split: 60/20/20) is deliberately deferred
 
 - **Fabrication threshold = `max(3×MAD, 0.0001)`.** In low-volatility regimes MAD collapses toward zero, which would make a pure 3×MAD rule slash honest Providers whose aggregation method merely differs from the oracle's. The absolute floor guarantees that only unambiguous fabrication is punished — consistent with the core principle that punishment must stay deterministic. Live example: job #5 attested FR `6.51e-6` against an oracle median of `1.47e-5`; a deviation of `8.2e-6` against a floor-dominated threshold of `1e-4` → VERIFIED.
 - **Quorum 4/6 with `unverifiable` fallback.** If fewer than 4 of 6 CEXs respond, the oracle retries; if the attestation freshness window (15 min) expires, the job settles COMPLETE with **no slash and no tier impact**. The protocol never punishes what it could not verify. Live example: job #4.
-- **No-contest band (±0.5×MAD) does not consume a tier-window slot.** A Provider who hugs the median earns no reputation from it — and because no-contest jobs are excluded from the 20-job window denominator entirely, a Provider cannot graduate to Silver/Gold on neutral signals alone. This closes the band-hugging strategy where a Provider farms tier accuracy by submitting values indistinguishable from consensus: such submissions are reputation-neutral, not reputation-positive.
+- **No-contest band (±0.5×MAD) does not consume a tier-window slot.** A Provider who hugs the median earns no reputation from it — and because no-contest jobs are excluded from the 20-job window denominator entirely — enforced at the oracle call site, where only `win`/`loss` reach [`recordOutcome`](https://github.com/cryptohakka/althemis/blob/02ae413b9f933703c40a89152e426f574115fe12/protocol/oracle.ts#L409-L412), and at the type level, where [`JobOutcome = 'win' | 'loss'`](https://github.com/cryptohakka/althemis/blob/02ae413b9f933703c40a89152e426f574115fe12/protocol/tier.ts#L25) makes a no-contest structurally unrepresentable in the window — a Provider cannot graduate to Silver/Gold on neutral signals alone. This closes the band-hugging strategy where a Provider farms tier accuracy by submitting values indistinguishable from consensus: such submissions are reputation-neutral, not reputation-positive.
 - **Regime signals carry no bond.** Regime classification is interpretive; it lives entirely in the reputation domain with the Adjudicator as backstop.
 
 ### v1 scope cuts
