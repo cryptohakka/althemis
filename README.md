@@ -85,6 +85,9 @@ A 20% **dispute-filer reward** (target split: 60/20/20) is deliberately deferred
 - ✅ End-to-end flow verified on Arc Testnet: honest job settled COMPLETE; fabricated-data job detected and SLASHED.
 - ✅ Two-phase oracle live: attestation VERIFIED in production (job #5, `medianAtAttest` / `madAtAttest` recorded on disk), and the `unverifiable` quorum-failure path exercised end-to-end (job #4 — settles COMPLETE with no slash, no tier impact).
 - ✅ Automated pipeline under systemd: `althemis.service` (Council consumer cycle + Provider job submission) and `althemis-oracle.service` (two-phase settlement) run unattended, with oracle state persisted across restarts.
+- ✅ Settlement transactions on Arc Testnet:
+  - job #4 — `unverifiable` COMPLETE (no slash, no tier impact): [`0x1a8bfd15...`](https://explorer.arc.fun/tx/0x1a8bfd15239626dec9e0da1df7a1088327282c169f23ea95acb11b798c62113e)
+  - job #5 — `no_contest` COMPLETE (neutral signal, tier window not consumed): [`0xf11f5b1b...`](https://explorer.arc.fun/tx/0xf11f5b1b6bd2d6028a5cedfa66b2edc2618f8b9c87b333f97944e0c84a635d72)
 - 🔜 Public Provider onboarding, dashboard at `althemis.a2aflow.space`.
 
 ## Known Limitations & Roadmap
