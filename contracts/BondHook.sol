@@ -96,6 +96,10 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
     // Provider job counters (for new-provider cap)
     mapping(address => uint256) public providerJobCount;
 
+    // Per-job guard: a job is counted toward providerJobCount at most once,
+    // regardless of how many times a (mis-behaving) core fires the terminal hook.
+    mapping(uint256 => bool) public jobCounted;
+
     // ── Events ─────────────────────────────────────────────────
     event BondDeposited(address indexed provider, uint256 amount);
     event BondWithdrawn(address indexed provider, uint256 amount);
@@ -109,7 +113,6 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
     error OnlyACP();
     error InsufficientBond(uint256 required, uint256 available);
     error NewProviderBudgetExceeded(uint256 budget, uint256 cap);
-    error NewProviderJobCapExceeded(uint256 count, uint256 cap);
     error InsufficientFreeBalance(uint256 requested, uint256 free);
     error ZeroAddress();
 
@@ -204,10 +207,11 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
         uint256 budget   = job.budget;
         uint256 count    = providerJobCount[provider];
 
-        // New provider checks (< 10 completed jobs)
+        // New provider (< NEW_PROVIDER_JOB_CAP completed jobs): budget-capped
+        // per job, with no cap on the number of concurrent/total jobs. The
+        // provider graduates to standard limits once providerJobCount reaches
+        // NEW_PROVIDER_JOB_CAP.
         if (count < NEW_PROVIDER_JOB_CAP) {
-            if (count >= NEW_PROVIDER_JOB_CAP)
-                revert NewProviderJobCapExceeded(count, NEW_PROVIDER_JOB_CAP);
             if (budget > NEW_PROVIDER_BUDGET_CAP)
                 revert NewProviderBudgetExceeded(budget, NEW_PROVIDER_BUDGET_CAP);
         }
@@ -238,7 +242,8 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
     function _afterComplete(uint256 jobId) internal {
         _unlockBond(jobId);
         address provider = jobProvider[jobId];
-        if (provider != address(0)) {
+        if (provider != address(0) && !jobCounted[jobId]) {
+            jobCounted[jobId] = true;
             providerJobCount[provider]++;
         }
     }
@@ -272,8 +277,9 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
             _unlockBond(jobId);
         }
 
-        // Increment job count on reject too (for graduation)
-        if (provider != address(0)) {
+        // Increment job count on reject too (for graduation), once per job
+        if (provider != address(0) && !jobCounted[jobId]) {
+            jobCounted[jobId] = true;
             providerJobCount[provider]++;
         }
     }

@@ -194,16 +194,13 @@ contract BondHookTest is Test {
         assertEq(hook.jobBondLocked(11), 10 * USDC_1);
     }
 
-    /// @dev Documents the dead-code finding: the inner
-    ///      `if (count >= NEW_PROVIDER_JOB_CAP) revert NewProviderJobCapExceeded`
-    ///      sits inside `if (count < NEW_PROVIDER_JOB_CAP)` and can never fire.
-    ///      Current behavior = "first 10 jobs are budget-capped, never job-capped".
-    ///      If the intended design is a hard stop at 10 jobs pending review,
-    ///      this test will start failing once that is implemented — update it then.
-    function test_Documents_JobCapIsUnreachable() public {
+    /// @dev New-provider invariant: while count < NEW_PROVIDER_JOB_CAP a provider
+    ///      is capped on per-job budget only, never on the number of jobs. The
+    ///      provider keeps taking (budget-capped) jobs and graduates at the cap.
+    function test_NewProvider_BudgetCappedNotCountCapped() public {
         _deposit(100 * USDC_1);
         for (uint256 i = 1; i <= 15; i++) {
-            _completeJob(i, USDC_1); // 11th–15th jobs are NOT blocked
+            _completeJob(i, USDC_1); // 11th–15th jobs are NOT blocked by a count cap
         }
         assertEq(hook.providerJobCount(provider), 15);
     }
@@ -339,18 +336,20 @@ contract BondHookTest is Test {
     // 6. Documented assumption — core must not double-settle
     // ══════════════════════════════════════════════════════════
 
-    /// @dev BondHook assumes the ERC-8183 core never fires complete/reject
-    ///      twice for the same job. _unlockBond is idempotent (early return),
-    ///      but providerJobCount would double-increment. This test documents
-    ///      the current behavior so a future guard changes it consciously.
-    function test_Documents_DoubleCompleteDoubleCounts() public {
+    /// @dev Defense-in-depth: the deployed ERC-8183 core gates complete()/reject()
+    ///      on JobStatus.Submitted and flips to a terminal status before firing the
+    ///      after-hook, so a job's terminal hook fires at most once via the real core.
+    ///      BondHook does not trust that: the jobCounted guard makes providerJobCount
+    ///      idempotent even if a mis-behaving core re-fires the hook.
+    function test_DoubleComplete_CountedOnce() public {
         _deposit(2 * USDC_1);
         _fundJob(1, USDC_1);
 
         core.driveAfterComplete(1);
-        core.driveAfterComplete(1); // hypothetical core misbehavior
+        core.driveAfterComplete(1); // simulated core misbehavior
 
-        assertEq(hook.bondLocked(provider), 0);          // safe: unlock is idempotent
-        assertEq(hook.providerJobCount(provider), 2);    // known: count inflates
+        assertEq(hook.bondLocked(provider), 0);          // unlock is idempotent
+        assertEq(hook.providerJobCount(provider), 1);    // count is now idempotent too
+        assertTrue(hook.jobCounted(1));
     }
 }
