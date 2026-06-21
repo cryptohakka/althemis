@@ -28,6 +28,24 @@ A Provider can be wrong and survive. A Provider cannot lie and survive.
 
 **Althemis insures honesty, not alpha.**
 
+## Is the tier selective? We measured it.
+
+Most reputation systems assume their own tiers mean something. We checked ours, found they didn't, and rebuilt them.
+
+**The old window promoted noise.** v1.0 ranked Providers by win rate over a 20-job window, promoting at `win_rate >= 0.60`. Under a fair coin (true p = 0.5):
+
+```
+P(win_rate >= 0.60 | n = 20, p = 0.5) = P(X >= 12 | Binom(20, 0.5)) = 0.252
+```
+
+A Provider with zero edge clears the Silver bar in **one window out of four**. False promotion was not a tail event.
+
+**The point estimate is not the edge.** A Provider sitting at 13/20 = 65% looks promotable, but its Wilson 95% interval is `[0.39, 0.78]` -- it straddles 0.50, so coin-flip cannot be rejected. Ranking on the point estimate ranks on sampling noise, and the promote-in-1 / demote-in-2 asymmetry let that noise ratchet upward.
+
+**Our own signal fails the external check.** Run through [touchstone](https://touchstone.a2aflow.space), our falsification harness, the frZ funding-rate signal returns `NO_EDGE`: `min_p = 0.0897`, zero survivors after episode-collapse + HAC + M = 6 multiple-comparison correction. The Council gate that would filter it sits at the **14.8th percentile -> NOT_SELECTIVE**, against an oracle positive control at the **0th percentile -> SELECTIVE**. The gate we would rely on does not select.
+
+**So we split the tier into two axes** (full spec under *Tier system* below). Reliability is deterministic, slashable, and carries the bond economics; Skill grants a discount only when the Wilson **lower bound** -- not a lucky point estimate -- clears the bar. Under frZ's measured `NO_EDGE`, no Provider reaches Edge, so the Skill discount is fully implemented and **currently unused**: the data does not justify promoting anyone, and the system reports exactly that.
+
 ## Architecture
 
 ```
@@ -43,8 +61,8 @@ Provider (FR / OI / Regime)          Consumer (Council)
                           │
             ┌─────────────┴─────────────┐
             ▼                           ▼
-   Deterministic settlement      Tier engine (Bronze / Silver / Gold)
-   (COMPLETE / SLASH)            (rolling 20-job tumbling window)
+   Deterministic settlement      Two-axis tier engine
+   (COMPLETE / SLASH)            (Reliability: bond rate / Skill: discount)
                           │
                           ▼
         Adjudicator (dispute path — attestation fraud only)
@@ -69,10 +87,28 @@ Regime classification is inherently interpretive, so it carries no bond and no a
 
 ### Tier system (reputation)
 
-- **Window**: tumbling window of 20 settled jobs (not rolling — each window is evaluated once, preventing one bad streak from being double-counted).
-- **Promotion**: 60% accuracy → Silver, 72% → Gold.
-- **Demotion**: two consecutive windows with win-rate below 45%.
-- **What tier buys you**: required bond ratio of **200% (Bronze) / 150% (Silver) / 100% (Gold)** of signal exposure, plus marketplace display priority. Reputation literally lowers your cost of capital.
+The tier was redesigned in v1.1 after we measured that the original win-rate window did not actually distinguish skill from noise (see *Is the tier selective?* above). Tiers now sit on **two independent axes**.
+
+**Reliability axis — deterministic, sets the bond rate.** Driven by the Phase A *verified attestation count*. It is slashable: a proven fabrication resets the count to zero.
+
+| Reliability | Verified count | Bond rate |
+|---|---|---|
+| Bronze | 0–9 | 20000 bps (200%) |
+| Silver | 10–49 | 16000 bps (160%) |
+| Gold | 50+ | 12500 bps (125%) |
+
+**Skill axis — probabilistic, grants a discount only.** Driven by the **cumulative Wilson 95% lower bound** of directional win rate, not the point estimate. Demotion uses a 5% hysteresis band.
+
+| Skill | Wilson lower bound | Effect |
+|---|---|---|
+| Unrated | n < 20 | none |
+| Calibrated | lcb < 0.50 | none |
+| Edge-S | lcb ≥ 0.50 | −10% |
+| Edge-G | lcb ≥ 0.60 | −20% |
+
+**Effective bond rate** = `reliabilityBps × skillDiscount / 10000`, with a hard floor of **10000 bps (100%)** enforced in `BondHook.sol`. The floor is the Gold × Edge-G corner (`12500 × 0.80 = 10000`): even the best-rated Provider still bonds 100% of exposure, so a slash always covers the consumer budget. Tier changes apply to **new job locks only** — an existing lock keeps the rate it was funded at.
+
+Why the split: a fabrication is a deterministic fact, so it drives the slashable Reliability axis. Predictive skill is a statistical estimate, so it only ever grants a discount, and only when the *lower bound* — not a lucky point estimate — clears the bar. Punishment stays deterministic; reputation stays probabilistic.
 
 ### Slash distribution
 
@@ -82,37 +118,35 @@ A 20% **dispute-filer reward** (target split: 60/20/20) is deliberately deferred
 
 ## Status
 
-- ✅ End-to-end flow verified on Arc Testnet: honest job settled COMPLETE; fabricated-data job detected and SLASHED.
-- ✅ Two-phase oracle live: attestation VERIFIED in production (job #5, `medianAtAttest` / `madAtAttest` recorded on disk), and the `unverifiable` quorum-failure path exercised end-to-end (job #4 — settles COMPLETE with no slash, no tier impact).
+- ✅ End-to-end flow verified on Arc Testnet under the two-axis tier system: an honest attestation passes Phase A (Reliability +1), and a fabricated attestation is detected and SLASHED 100% of bond, resetting Reliability to zero.
+- ✅ **The oracle slashes autonomously.** Phase A reaches its verdict from a 6-CEX median with a deterministic threshold and submits the on-chain `reject` itself -- no external price oracle, no human in the slash path. The fabrication verdict is reproducible: the same CEX quorum and threshold yield the same outcome on replay.
+- ✅ Live slash on Arc Testnet (BondHook `0xc522095eb7ddaa9b67ca735eebedc073370a5f5f`): a fabricated `FR_BTC_8h=0.005;z=99` was caught against a 6-CEX median of `~0` (`diff=5.0e-3` > threshold `1.07e-4`, quorum 6/6) and slashed: [`0x021e0422...`](https://testnet.arcscan.app/tx/0x021e0422d5752137eabdf3c1d0d90d93cfb71856216790230bdeb2c8cd44a8a8). The provider's `verifiedCount` reset `1 -> 0`, returning the bond rate to the `20000` bps default.
 - ✅ Automated pipeline under systemd: `althemis.service` (Council consumer cycle + Provider job submission) and `althemis-oracle.service` (two-phase settlement) run unattended, with oracle state persisted across restarts.
-- ✅ Settlement transactions on Arc Testnet, all under the same Phase A threshold `max(3×MAD, 0.0001)`:
-  - job #5 — attestation VERIFIED (honest FR `6.51e-6`, deviation well inside threshold): the prediction later settled `no_contest` (neutral signal): [`0xf11f5b1b...`](https://explorer.arc.fun/tx/0xf11f5b1b6bd2d6028a5cedfa66b2edc2618f8b9c87b333f97944e0c84a635d72)
-  - job #7 — **fabricated attestation SLASHED** (`FR_BTC_8h=0.005` vs median `4.1e-5`, diff `4.96e-3` > threshold `1.03e-4`): [`0x3bb7ddac...`](https://explorer.arc.fun/tx/0x3bb7ddaccd221f6fbe673791ebc12c5f8e415fb0229cf11512460dbf7927dfbb)
-  - job #4 — `unverifiable` COMPLETE (quorum-failure fallback, no slash, no tier impact): [`0x1a8bfd15...`](https://explorer.arc.fun/tx/0x1a8bfd15239626dec9e0da1df7a1088327282c169f23ea95acb11b798c62113e)
+- ✅ The honest path and the `unverifiable` quorum-failure path (settles COMPLETE, no slash, no tier impact) are both exercised end-to-end and covered by the Foundry suite below.
 
-  Jobs #5 and #7 are the core demonstration: under one identical threshold, an honest value survives and a fabricated value is slashed 100% of bond. *A Provider can be wrong and survive; a Provider cannot lie and survive.*
-- ✅ `BondHook.sol` Foundry test suite: 19 tests passing — bond lock/unlock/withdraw, `beforeFund` coverage + new-provider caps, tier-based bond ratios (200/150/100%), slash 80/20 split with event/balance assertions, and the non-slash reject path (unverifiable settlement). Run with `forge test --match-path "contracts/test/BondHook.t.sol"`.
+  This is the core demonstration: under one deterministic threshold, an honest value survives and a fabricated value is slashed 100% of bond -- and the oracle does it on its own. *A Provider can be wrong and survive; a Provider cannot lie and survive.*
+- ✅ `BondHook.sol` Foundry test suite: 26 tests passing — bond lock/unlock/withdraw, `beforeFund` coverage + new-provider caps, two-axis bond rate (Reliability sets bps, Skill discounts, 100% floor), slash 80/20 split with event/balance assertions, and the non-slash reject path (unverifiable settlement). Run with `forge test --match-path "contracts/test/BondHook.t.sol"`.
 - 🔜 Public Provider onboarding, dashboard at `althemis.a2aflow.space`.
 
 ## Known Limitations & Roadmap
 
 ### Deliberate design choices (not bugs)
 
-- **Fabrication threshold = `max(3×MAD, 0.0001)`.** In low-volatility regimes MAD collapses toward zero, which would make a pure 3×MAD rule slash honest Providers whose aggregation method merely differs from the oracle's. The absolute floor guarantees that only unambiguous fabrication is punished — consistent with the core principle that punishment must stay deterministic. Live example: job #5 attested FR `6.51e-6` against an oracle median of `1.47e-5`; a deviation of `8.2e-6` against a floor-dominated threshold of `1e-4` → VERIFIED.
-- **Quorum 4/6 with `unverifiable` fallback.** If fewer than 4 of 6 CEXs respond, the oracle retries; if the attestation freshness window (15 min) expires, the job settles COMPLETE with **no slash and no tier impact**. The protocol never punishes what it could not verify. Live example: job #4.
+- **Fabrication threshold = `max(3×MAD, 0.0001)`.** In low-volatility regimes MAD collapses toward zero, which would make a pure 3×MAD rule slash honest Providers whose aggregation method merely differs from the oracle's. The absolute floor guarantees that only unambiguous fabrication is punished — consistent with the core principle that punishment must stay deterministic. The floor is what makes the honest path survive: an attested FR a few parts in 1e-6 away from consensus sits far inside a floor-dominated threshold of `1e-4` and is VERIFIED, never slashed.
+- **Quorum 4/6 with `unverifiable` fallback.** If fewer than 4 of 6 CEXs respond, the oracle retries; if the attestation freshness window (15 min) expires, the job settles COMPLETE with **no slash and no tier impact**. The protocol never punishes what it could not verify.
 - **No-contest band (±0.5×MAD) does not consume a tier-window slot.** A Provider who hugs the median earns no reputation from it — and because no-contest jobs are excluded from the 20-job window denominator entirely — enforced at the oracle call site, where only `win`/`loss` reach [`recordOutcome`](https://github.com/cryptohakka/althemis/blob/02ae413b9f933703c40a89152e426f574115fe12/protocol/oracle.ts#L409-L412), and at the type level, where [`JobOutcome = 'win' | 'loss'`](https://github.com/cryptohakka/althemis/blob/02ae413b9f933703c40a89152e426f574115fe12/protocol/tier.ts#L25) makes a no-contest structurally unrepresentable in the window — a Provider cannot graduate to Silver/Gold on neutral signals alone. This closes the band-hugging strategy where a Provider farms tier accuracy by submitting values indistinguishable from consensus: such submissions are reputation-neutral, not reputation-positive.
 - **Regime signals carry no bond.** Regime classification is interpretive; it lives entirely in the reputation domain with the Adjudicator as backstop.
 
 ### v1 scope cuts
 
-- **On-chain scope is deliberately thin.** This repository's only contract is `BondHook.sol` — bond custody, tier-based bond ratios, the new-provider exposure cap, and slash execution. The job lifecycle (create / fund / submit / settle) lives in an external **ERC-8183** job marketplace core deployed on Arc Testnet; Althemis hangs off it as a hook rather than re-implementing a registry. Dependency details (core contract address, ABI notes) are in `protocol/escrow.ts`.
+- **On-chain scope is deliberately thin.** This repository's only contract is `BondHook.sol` — bond custody, the two-axis bond rate (Reliability sets the bps, Skill discounts, 100% floor), the new-provider exposure cap, and slash execution. The job lifecycle (create / fund / submit / settle) lives in an external **ERC-8183** job marketplace core deployed on Arc Testnet; Althemis hangs off it as a hook rather than re-implementing a registry. Dependency details (core contract address, ABI notes) are in `protocol/escrow.ts`.
 - **Dispute-filer reward (60/20/20 split) is deferred.** The implemented split is 80/20 (Consumer/treasury). The filer reward only makes sense once dispute filing is permissionless, which requires the v2 Adjudicator work below — shipping the reward before the role exists would be dead code in the critical slash path.
 - **OI attestation verification is deferred.** Open interest lacks a clean cross-exchange consensus value (OI is venue-local, not fungible across exchanges the way funding rates are comparable). Rather than auto-passing OI attestations — which would dilute the meaning of "verified" — OI jobs are held out of Phase A until a sound verification source is defined.
 - **Adjudicator is operator-run.** v1 uses a single operator-controlled Adjudicator, invoked only on attestation-fraud disputes. v2 roadmap: decentralize adjudication (committee or restaked-operator model), open dispute filing permissionlessly (50%-of-bond filer stake, 20% filer reward), and extend dispute scope beyond attestation fraud only where a deterministic verification rule exists for the new claim type.
 
 ### Roadmap
 
-1. ✅ Foundry test suite for `BondHook.sol` (bond lock/unlock, slash + split, tier-based bond ratios, new-provider cap) — **done, 19 tests passing**
+1. ✅ Foundry test suite for `BondHook.sol` (bond lock/unlock, slash + split, two-axis bond rate + 100% floor, new-provider cap) — **done, 26 tests passing**
 2. Public Provider onboarding + dashboard (`althemis.a2aflow.space`)
 3. OI attestation verification source
 4. Adjudicator decentralization + permissionless dispute filing with filer reward (v2)

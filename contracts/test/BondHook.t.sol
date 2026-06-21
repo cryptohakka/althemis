@@ -68,6 +68,15 @@ contract BondHookTest is Test {
 
     uint256 constant USDC_1 = 1_000_000; // 1 USDC, 6 decimals
 
+    // Effective bond rates (basis points) at the two extremes of the
+    // reliability × skill product. These are derived offchain by tier.ts
+    // and pushed via setProviderBondRate; this test asserts the on-chain
+    // math at each end of the legal range.
+    //   Bronze × Calibrated  = 20000 (200%, default)
+    //   Gold   × Edge-G      = 12500 × 8000 / 10000 = 10000 (100%, floor)
+    uint256 constant BRONZE_BPS = 20000;
+    uint256 constant MIN_BPS    = 10000;
+
     function setUp() public {
         usdc = new MockUSDC();
         core = new MockCore();
@@ -97,6 +106,11 @@ contract BondHookTest is Test {
     function _completeJob(uint256 jobId, uint256 budget) internal {
         _fundJob(jobId, budget);
         core.driveAfterComplete(jobId);
+    }
+
+    function _setRate(uint256 bps) internal {
+        vm.prank(oracle);
+        hook.setProviderBondRate(provider, bps);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -130,11 +144,11 @@ contract BondHookTest is Test {
         hook.withdraw(USDC_1);
     }
 
-    function test_AfterFund_LocksBronzeRate() public {
+    function test_AfterFund_LocksDefaultBronzeRate() public {
         _deposit(2 * USDC_1);
         _fundJob(1, USDC_1);
 
-        // Bronze = 200% of budget
+        // Default (no rate set) = Bronze = 200% of budget
         assertEq(hook.jobBondLocked(1), 2 * USDC_1);
         assertEq(hook.bondLocked(provider), 2 * USDC_1);
         assertEq(hook.jobProvider(1), provider);
@@ -206,39 +220,87 @@ contract BondHookTest is Test {
     }
 
     // ══════════════════════════════════════════════════════════
-    // 3. Tier rates — oracle control + lock amounts
+    // 3. Bond rate — oracle control + lock amounts + floor invariant
     // ══════════════════════════════════════════════════════════
 
-    function test_TierRates() public {
-        assertEq(hook.getBondRate(provider), 200); // default Bronze
-
-        vm.prank(oracle);
-        hook.setProviderTier(provider, BondHook.Tier.Silver);
-        assertEq(hook.getBondRate(provider), 150);
-
-        vm.prank(oracle);
-        hook.setProviderTier(provider, BondHook.Tier.Gold);
-        assertEq(hook.getBondRate(provider), 100);
+    function test_DefaultBondRate_IsBronze() public {
+        // No rate set → getBondRate returns DEFAULT_BOND_RATE_BPS
+        assertEq(hook.getBondRate(provider), BRONZE_BPS);
+        assertEq(hook.providerBondRateBps(provider), 0); // mapping unset
     }
 
-    function test_SetTier_RevertsForNonOracle() public {
+    function test_SetBondRate_Silver() public {
+        _setRate(16000); // Silver = 160%
+        assertEq(hook.getBondRate(provider), 16000);
+        assertEq(hook.providerBondRateBps(provider), 16000);
+    }
+
+    function test_SetBondRate_Gold() public {
+        _setRate(12500); // Gold = 125%
+        assertEq(hook.getBondRate(provider), 12500);
+    }
+
+    function test_SetBondRate_GoldEdgeG_HitsFloor() public {
+        // Math floor of the offchain product: Gold × Edge-G = 12500 × 0.80 = 10000
+        _setRate(MIN_BPS);
+        assertEq(hook.getBondRate(provider), MIN_BPS);
+    }
+
+    function test_SetBondRate_RevertsBelowFloor() public {
+        // 9999 bps (99.99%) breaks the slash≥budget invariant → must revert
+        vm.prank(oracle);
+        vm.expectRevert(
+            abi.encodeWithSelector(BondHook.BondRateBelowFloor.selector, 9999, MIN_BPS)
+        );
+        hook.setProviderBondRate(provider, 9999);
+
+        // Zero is also below floor — defends against accidental "reset to 0"
+        vm.prank(oracle);
+        vm.expectRevert(
+            abi.encodeWithSelector(BondHook.BondRateBelowFloor.selector, 0, MIN_BPS)
+        );
+        hook.setProviderBondRate(provider, 0);
+    }
+
+    function test_SetBondRate_EmitsEvent() public {
+        vm.expectEmit(true, false, false, true);
+        emit BondHook.BondRateUpdated(provider, 16000);
+        _setRate(16000);
+    }
+
+    function test_SetBondRate_RevertsForNonOracle() public {
         vm.prank(rando);
         vm.expectRevert(); // AccessControlUnauthorizedAccount
-        hook.setProviderTier(provider, BondHook.Tier.Gold);
+        hook.setProviderBondRate(provider, 12500);
     }
 
-    function test_GoldTier_LocksLowerBond() public {
-        vm.prank(oracle);
-        hook.setProviderTier(provider, BondHook.Tier.Gold);
+    function test_LowerRate_LocksLowerBond() public {
+        // Push provider to the math floor (Gold × Edge-G), then graduate past
+        // the new-provider budget cap so we can fund a larger job.
+        _setRate(MIN_BPS); // 10000 bps = 100%
 
-        // Graduate past the new-provider cap first so budget isn't limited
         _deposit(100 * USDC_1);
         for (uint256 i = 1; i <= 10; i++) {
-            _completeJob(i, USDC_1);
+            _completeJob(i, USDC_1); // locks 1 USDC at 100% rate
         }
 
         _fundJob(11, 5 * USDC_1);
-        assertEq(hook.jobBondLocked(11), 5 * USDC_1); // Gold = 100%
+        assertEq(hook.jobBondLocked(11), 5 * USDC_1); // 100% of 5 USDC
+    }
+
+    /// @dev Rate changes only affect NEW locks. Job 1 locked at Bronze (200%)
+    ///      must keep its 2-USDC lock even after the provider is upgraded.
+    function test_RateChange_DoesNotAffectExistingLock() public {
+        _deposit(4 * USDC_1);
+        _fundJob(1, USDC_1); // locks 2 USDC at default Bronze
+
+        _setRate(MIN_BPS); // promote to floor (100%)
+
+        assertEq(hook.jobBondLocked(1), 2 * USDC_1); // unchanged
+        assertEq(hook.bondLocked(provider), 2 * USDC_1);
+
+        _fundJob(2, USDC_1); // new lock at new rate
+        assertEq(hook.jobBondLocked(2), USDC_1); // 100% of 1 USDC
     }
 
     // ══════════════════════════════════════════════════════════
@@ -261,6 +323,21 @@ contract BondHookTest is Test {
         assertEq(hook.bondLocked(provider), 0);
         assertEq(hook.jobBondLocked(1), 0);
         assertEq(hook.providerJobCount(provider), 1); // reject also counts
+    }
+
+    /// @dev Floor invariant: at the minimum allowed rate, slash still meets the
+    ///      job budget exactly. Consumer gets 80% of budget, treasury 20%.
+    function test_Slash_AtFloor_StillCoversBudget() public {
+        _setRate(MIN_BPS);
+        _deposit(USDC_1);
+        _fundJob(1, USDC_1); // locks 1 USDC at 100%
+
+        core.driveAfterReject(1, hook.SLASH_REASON());
+
+        // Lock equals budget → 80/20 of the budget itself
+        assertEq(usdc.balanceOf(consumer), (USDC_1 * 80) / 100);
+        assertEq(usdc.balanceOf(treasury), (USDC_1 * 20) / 100);
+        assertEq(hook.bondBalance(provider), 0);
     }
 
     function test_Slash_OnlyAffectsThatJobsLock() public {

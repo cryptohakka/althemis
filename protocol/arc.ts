@@ -10,7 +10,6 @@ import {
   http,
   defineChain,
   type PublicClient,
-  type WalletClient,
   type Chain,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -37,19 +36,19 @@ export const arcChain = getArcChain();
 export function getPublicClient(): PublicClient {
   return createPublicClient({
     chain: arcChain,
-    transport: http(process.env.ARC_RPC_URL!),
+    transport: http(process.env.ARC_RPC_URL!, { timeout: 30000, retryCount: 8, retryDelay: 2000 }),
   });
 }
 
 // ── Wallet client (signing) ───────────────────────────────────
-export function getOracleClient(): WalletClient {
+export function getOracleClient() {
   const pk = process.env.ORACLE_PRIVATE_KEY;
   if (!pk) throw new Error('ORACLE_PRIVATE_KEY not set in .env');
   const account = privateKeyToAccount(pk as `0x${string}`);
   return createWalletClient({
     account,
     chain: arcChain,
-    transport: http(process.env.ARC_RPC_URL!),
+    transport: http(process.env.ARC_RPC_URL!, { timeout: 30000, retryCount: 8, retryDelay: 2000 }),
   });
 }
 

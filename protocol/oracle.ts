@@ -6,15 +6,16 @@
  *
  *   Phase A — ATTESTATION (immediate, deterministic):
  *     On detecting a freshly Submitted job, verify the attested value against
- *     live 6-CEX median. Fabrication → 100% slash. Verification failure
- *     (quorum, API errors) NEVER slashes — it retries, and if the freshness
- *     window expires, the job is marked unverifiable: no slash, no tier impact.
+ *     live 6-CEX median. Fabrication → 100% slash + reliability reset.
+ *     Verification failure (quorum, API errors) NEVER slashes — it retries,
+ *     and if the freshness window expires, the job is marked unverifiable:
+ *     no slash, no tier impact.
  *
  *   Phase B — PREDICTION (N-hour, probabilistic, tier only):
  *     After the signal window (FR=8h, OI=4h), score the provider's
  *     DIRECTIONAL claim (dir=long/short from their z-score model).
  *     Provider is paid (complete) regardless of outcome — payment rewards
- *     honest delivery, tier tracks skill.
+ *     honest delivery, skill tier tracks ability.
  *       - dir=neutral or legacy format (no dir) → no claim → not scored
  *       - |realized - attested| <= 0.5 × MAD    → no-contest, not scored
  *         (no-contest does NOT consume a tumbling-window slot, so
@@ -29,6 +30,13 @@
  *   REGIME signals: no bond, adjudicator-settled. Skipped here.
  *   OI: per-CEX OI verification not yet implemented — jobs held, never
  *   auto-passed (a placeholder pass would silently break the deterministic layer).
+ *
+ *   Tier integration (tier.ts):
+ *     Phase A verified → recordVerified(provider) (+1 reliability count)
+ *     Phase A slash    → recordSlash(provider)    (reset reliability to 0)
+ *     Phase B win/loss → recordOutcome(provider, jobId, kind) (skill axis)
+ *     no_contest       → NOT recorded (window-neutral)
+ *     unverifiable     → NOT recorded (no tier impact, paid out via complete)
  */
 
 import 'dotenv/config';
@@ -39,7 +47,7 @@ import {
   ERC8183_ADDRESS,
   type Job,
 } from './escrow.js';
-import { recordOutcome } from './tier.js';
+import { recordOutcome, recordVerified, recordSlash } from './tier.js';
 
 // ── Config ────────────────────────────────────────────────────
 const POLL_INTERVAL_MS = 5 * 60 * 1000;  // 5 min
@@ -347,7 +355,9 @@ async function processJobs(): Promise<void> {
             );
             logEvent({ phase: 'A', jobId: key, outcome: 'slashed', tx: txHash,
                        detail: `diff=${result.diff.toFixed(6)} threshold=${result.threshold.toFixed(6)}` });
-            // Deterministic punishment only — no recordOutcome.
+            // Reliability axis: reset verifiedCount to 0 (deterministic punishment).
+            // Skill axis is independent — fabrication does not retroactively affect Phase B history.
+            await recordSlash(job.provider);
           } catch (err) {
             console.error(`[oracle] job #${key}: slash tx failed:`, err);
           }
@@ -368,6 +378,8 @@ async function processJobs(): Promise<void> {
         saveState(state);
         console.log(`[oracle] job #${key}: attestation VERIFIED, settles in ${(windowMsFor(decoded.type) / 3600000).toFixed(0)}h`);
         logEvent({ phase: 'A', jobId: key, outcome: 'verified', detail: decoded.raw });
+        // Reliability axis: +1 to verified count (deterministic reward for honest attestation).
+        await recordVerified(job.provider);
         continue;
       } else {
         // Missed the freshness window (oracle downtime). Fail-safe:
@@ -423,7 +435,7 @@ async function processJobs(): Promise<void> {
       continue;
     }
 
-    // Honest provider → always paid. Tier reflects skill.
+    // Honest provider → always paid. Tier (skill axis) reflects ability.
     try {
       const reason = keccak256(toBytes(`SETTLE:${outcome.kind}:${outcome.detail}`)) as Hex;
       const txHash = await completeJob(job.jobId, reason);
@@ -444,7 +456,7 @@ async function processJobs(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  console.log('[oracle] Althemis Price Oracle starting (two-phase, directional scoring)');
+  console.log('[oracle] Althemis Price Oracle starting (two-phase, two-axis tier)');
   console.log(`[oracle] ERC8183=${ERC8183_ADDRESS}`);
   console.log(`[oracle] poll=${POLL_INTERVAL_MS / 60000}min, attestation freshness=${ATTESTATION_FRESHNESS_MS / 60000}min`);
   console.log(`[oracle] fabrication=max(${FABRICATION_MAD_MULTIPLIER}×MAD, ${FR_FABRICATION_FLOOR}), no-contest=${FR_NO_CONTEST_MAD_MULTIPLIER}×MAD, quorum=${MIN_CEX_QUORUM}/6`);

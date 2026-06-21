@@ -8,7 +8,7 @@ import "../BondHook.sol";
 interface IERC8183Init {
     function initialize(address treasury) external;
     function setHookWhitelist(address hook, bool status) external;
-    function setPaymentTokenAllowlist(address token, bool status) external;
+    function setPaymentTokenAllowed(address token, bool status) external;
     function grantRole(bytes32 role, address account) external;
 }
 
@@ -40,7 +40,7 @@ contract DeployAlthemis is Script {
         // ── 3. Whitelist BondHook in ERC8183 ──────────────────
         if (erc8183Proxy != address(0)) {
             IERC8183Init(erc8183Proxy).setHookWhitelist(address(hook), true);
-            IERC8183Init(erc8183Proxy).setPaymentTokenAllowlist(usdc, true);
+            IERC8183Init(erc8183Proxy).setPaymentTokenAllowed(usdc, true);
         }
 
         vm.stopBroadcast();

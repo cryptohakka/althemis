@@ -3,7 +3,7 @@
  * Typed viem wrapper for ERC8183 core + BondHook
  * Covers the job lifecycle Althemis needs:
  *   createJob / setBudget / fund / submit / complete / reject / getJob
- * Plus bond helpers: deposit / withdraw / freeBalance / setTier
+ * Plus bond helpers: deposit / withdraw / freeBalance / setProviderBondRate
  */
 import 'dotenv/config';
 import { parseAbi, encodeFunctionData, type Address, type Hex } from 'viem';
@@ -36,20 +36,24 @@ export const ERC8183_ABI = parseAbi([
 ]);
 
 // ── BondHook ABI ─────────────────────────────────────────────
+// Tier enum is gone — the oracle pushes the effective rate in basis points
+// (reliability × skill discount, computed offchain in tier.ts).
 export const BOND_HOOK_ABI = parseAbi([
   'function deposit(uint256 amount)',
   'function withdraw(uint256 amount)',
   'function freeBalance(address provider) view returns (uint256)',
   'function bondBalance(address provider) view returns (uint256)',
   'function bondLocked(address provider) view returns (uint256)',
-  'function setProviderTier(address provider, uint8 tier)',
-  'function providerTier(address provider) view returns (uint8)',
+  'function setProviderBondRate(address provider, uint256 rateBps)',
+  'function providerBondRateBps(address provider) view returns (uint256)',
   'function providerJobCount(address provider) view returns (uint256)',
   'function getBondRate(address provider) view returns (uint256)',
+  'function DEFAULT_BOND_RATE_BPS() view returns (uint256)',
+  'function MIN_BOND_RATE_BPS() view returns (uint256)',
   'function SLASH_REASON() view returns (bytes32)',
   'event BondDeposited(address indexed provider, uint256 amount)',
   'event BondSlashed(uint256 indexed jobId, address indexed provider, uint256 amount, address consumer, address treasury)',
-  'event TierUpdated(address indexed provider, uint8 newTier)',
+  'event BondRateUpdated(address indexed provider, uint256 newRateBps)',
 ]);
 
 // ── USDC ABI (approve + balanceOf) ───────────────────────────
@@ -64,8 +68,6 @@ export enum JobStatus {
   Open = 0, Funded = 1, Submitted = 2,
   Completed = 3, Rejected = 4, Expired = 5,
 }
-
-export enum ProviderTier { Bronze = 0, Silver = 1, Gold = 2 }
 
 // ── Job type ──────────────────────────────────────────────────
 export interface Job {
@@ -139,6 +141,17 @@ export async function getFreeBalance(provider: Address): Promise<bigint> {
   }) as Promise<bigint>;
 }
 
+/** Current effective bond rate (basis points) onchain. Returns DEFAULT if unset. */
+export async function getProviderBondRate(provider: Address): Promise<bigint> {
+  const pub = getPublicClient();
+  return pub.readContract({
+    address: BOND_HOOK_ADDRESS,
+    abi: BOND_HOOK_ABI,
+    functionName: 'getBondRate',
+    args: [provider],
+  }) as Promise<bigint>;
+}
+
 export async function getSlashReason(): Promise<Hex> {
   const pub = getPublicClient();
   return pub.readContract({
@@ -153,7 +166,6 @@ export async function getSlashReason(): Promise<Hex> {
 /** Oracle: mark job complete (price verified) */
 export async function completeJob(jobId: bigint, reason: Hex): Promise<Hex> {
   const wallet = getOracleClient();
-  const oracle = getOracleAddress();
   return wallet.writeContract({
     address: ERC8183_ADDRESS,
     abi: ERC8183_ABI,
@@ -166,7 +178,6 @@ export async function completeJob(jobId: bigint, reason: Hex): Promise<Hex> {
 /** Oracle: reject job (no-slash: prediction miss) */
 export async function rejectJob(jobId: bigint, reason: Hex): Promise<Hex> {
   const wallet = getOracleClient();
-  const oracle = getOracleAddress();
   return wallet.writeContract({
     address: ERC8183_ADDRESS,
     abi: ERC8183_ABI,
@@ -182,18 +193,21 @@ export async function slashJob(jobId: bigint): Promise<Hex> {
   return rejectJob(jobId, slashReason);
 }
 
-/** Oracle: update provider tier after window evaluation */
-export async function setProviderTier(
+/**
+ * Oracle: push the effective bond rate (basis points) for a provider.
+ * Computed offchain by tier.ts as reliability × skill_discount.
+ * BondHook enforces rateBps >= MIN_BOND_RATE_BPS (10000 = 100%).
+ */
+export async function setProviderBondRate(
   provider: Address,
-  tier: ProviderTier,
+  rateBps: bigint,
 ): Promise<Hex> {
   const wallet = getOracleClient();
-  const oracle = getOracleAddress();
   return wallet.writeContract({
     address: BOND_HOOK_ADDRESS,
     abi: BOND_HOOK_ABI,
-    functionName: 'setProviderTier',
-    args: [provider, tier],
+    functionName: 'setProviderBondRate',
+    args: [provider, rateBps],
     chain: wallet.chain!,
   });
 }
