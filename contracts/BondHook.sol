@@ -63,7 +63,6 @@ interface IERC8183Core {
 // setProviderBondRate with the rate corresponding to verifiedCount=0
 // (reliability resets to Bronze). Skill axis is independent.
 //
-// Slash distribution (v1, dispute filer == consumer): 80% consumer,
 // 20% treasury. v2 will move to 60/20/20 with a permissionless filer
 // (implemented in Veriton; integration tracked separately).
 // ──────────────────────────────────────────────────────────────
@@ -81,7 +80,7 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
     // Bond rate denominator and floor (basis points; 10000 = 100%)
     uint256 public constant BPS_DENOMINATOR  = 10000;
     uint256 public constant DEFAULT_BOND_RATE_BPS = 20000; // 200% — new provider
-    uint256 public constant MIN_BOND_RATE_BPS     = 10000; // 100% — slash ≥ budget
+    uint256 public constant MIN_BOND_RATE_BPS     = 11000; // 110% - consumer 100% + challenger 10%
 
     // New provider cap: budget-capped per job until graduation
     uint256 public constant NEW_PROVIDER_JOB_CAP    = 10;
@@ -95,6 +94,7 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
 
     // ── State ──────────────────────────────────────────────────
     IERC20 public immutable usdc;
+    address public immutable core; // ERC8183 core (ACP grantee); read in challenge
     address public treasury;
 
     // Provider bond balances
@@ -105,6 +105,7 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
     mapping(uint256 => uint256) public jobBondLocked; // jobId => locked amount
     mapping(uint256 => address) public jobProvider;   // jobId => provider
     mapping(uint256 => address) public jobClient;     // jobId => client (slash recipient)
+    mapping(uint256 => uint256) public jobBudget;     // jobId => price (challenge basis)
 
     // Effective bond rate per provider (basis points). 0 = unset → DEFAULT.
     mapping(address => uint256) public providerBondRateBps;
@@ -126,6 +127,8 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
         address consumer, address treasury_
     );
     event BondRateUpdated(address indexed provider, uint256 newRateBps);
+    event BondChallenged(uint256 indexed jobId, address indexed challenger, uint256 reward);
+    event ChallengeRejected(uint256 indexed jobId, address indexed challenger, uint256 stakeForfeited);
 
     // ── Errors ─────────────────────────────────────────────────
     error OnlyACP();
@@ -134,6 +137,7 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
     error InsufficientFreeBalance(uint256 requested, uint256 free);
     error ZeroAddress();
     error BondRateBelowFloor(uint256 bps, uint256 floor);
+    error NotChallengeable(uint256 jobId);
 
     // ── Constructor ────────────────────────────────────────────
     constructor(address _usdc, address _treasury, address _oracle, address _acp) {
@@ -143,6 +147,7 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(ORACLE_ROLE, _oracle);
         _grantRole(ACP_ROLE, _acp); // ERC8183 contract address
+        core = _acp;
     }
 
     // ── ERC165 ─────────────────────────────────────────────────
@@ -258,6 +263,7 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
         jobBondLocked[jobId] = lockAmt;
         jobProvider[jobId]   = provider;
         jobClient[jobId]     = job.client;
+        jobBudget[jobId]     = job.budget;
         bondLocked[provider] += lockAmt;
 
         emit BondLocked(jobId, provider, lockAmt);
@@ -283,19 +289,9 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
         address consumer = jobClient[jobId];
 
         if (reason == SLASH_REASON && lockAmt > 0 && provider != address(0)) {
-            // v1: dispute filer == consumer ⇒ consumer gets 80%, treasury 20%.
-            // v2 (Veriton-style 60/20/20 with permissionless filer): tracked separately.
-            uint256 toConsumer = (lockAmt * 80) / 100;
-            uint256 toTreasury = lockAmt - toConsumer;
-
-            bondBalance[provider] -= lockAmt;
-            bondLocked[provider]  -= lockAmt;
-            delete jobBondLocked[jobId];
-
-            if (toConsumer > 0) usdc.safeTransfer(consumer, toConsumer);
-            if (toTreasury > 0) usdc.safeTransfer(treasury, toTreasury);
-
-            emit BondSlashed(jobId, provider, lockAmt, consumer, treasury);
+            // Oracle-initiated slash (Phase A fabrication): no challenger.
+            // consumer 100% of price, treasury = remainder, challenger = 0.
+            _distributeSlash(jobId, jobBudget[jobId], address(0));
         } else {
             // No slash: just unlock (normal reject, e.g. prediction miss)
             _unlockBond(jobId);
@@ -305,6 +301,68 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
         if (provider != address(0) && !jobCounted[jobId]) {
             jobCounted[jobId] = true;
             providerJobCount[provider]++;
+        }
+    }
+
+    // Slash distribution (3-way): consumer 100% of price (always),
+    // challenger 10% of price (deterministic challenge only; else 0),
+    // treasury = remainder. Floor 110% guarantees lockAmt >= 110% of price,
+    // so consumer(100%) + challenger(10%) <= lockAmt for every tier.
+    function _distributeSlash(uint256 jobId, uint256 budget, address challenger) internal {
+        uint256 lockAmt  = jobBondLocked[jobId];
+        address provider = jobProvider[jobId];
+        address consumer = jobClient[jobId];
+
+        uint256 toConsumer   = budget;
+        uint256 toChallenger = challenger != address(0) ? budget / 10 : 0;
+        uint256 toTreasury   = lockAmt - toConsumer - toChallenger;
+
+        bondBalance[provider] -= lockAmt;
+        bondLocked[provider]  -= lockAmt;
+        delete jobBondLocked[jobId];
+
+        if (toConsumer   > 0) usdc.safeTransfer(consumer,   toConsumer);
+        if (toChallenger > 0) usdc.safeTransfer(challenger, toChallenger);
+        if (toTreasury   > 0) usdc.safeTransfer(treasury,   toTreasury);
+        emit BondSlashed(jobId, provider, lockAmt, consumer, treasury);
+        if (toChallenger > 0) emit BondChallenged(jobId, challenger, toChallenger);
+    }
+
+    // Permissionless deterministic challenge. Anyone can challenge a
+    // still-locked job that is structurally invalid by on-chain state:
+    //   (1) expired squatter: now > expiredAt && status in {Funded, Submitted}
+    //   (6) post-expiry submit: submittedAt != 0 && submittedAt > expiredAt
+    // Stake = price/10. Holds => slash (consumer 100%, challenger 10%,
+    // treasury remainder) + stake returned. Fails => stake forfeited to treasury.
+    // Price/value claims are NOT challengeable here (oracle domain; v2).
+    function challenge(uint256 jobId) external nonReentrant {
+        uint256 lockAmt = jobBondLocked[jobId];
+        if (lockAmt == 0) revert NotChallengeable(jobId);
+
+        IERC8183Core.Job memory job = IERC8183Core(core).getJob(jobId);
+        if (job.hook != address(this)) revert NotChallengeable(jobId);
+
+        uint256 budget = jobBudget[jobId];
+        uint256 stake  = budget / 10;
+        usdc.safeTransferFrom(msg.sender, address(this), stake);
+
+        bool expiredSquatter =
+            job.expiredAt != 0 &&
+            block.timestamp > job.expiredAt &&
+            (job.status == IERC8183Core.JobStatus.Funded ||
+             job.status == IERC8183Core.JobStatus.Submitted);
+
+        bool postExpirySubmit =
+            job.submittedAt != 0 &&
+            job.expiredAt   != 0 &&
+            job.submittedAt > job.expiredAt;
+
+        if (expiredSquatter || postExpirySubmit) {
+            _distributeSlash(jobId, budget, msg.sender);
+            usdc.safeTransfer(msg.sender, stake);
+        } else {
+            usdc.safeTransfer(treasury, stake);
+            emit ChallengeRejected(jobId, msg.sender, stake);
         }
     }
 

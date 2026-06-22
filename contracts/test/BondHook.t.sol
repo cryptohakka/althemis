@@ -32,6 +32,23 @@ contract MockCore {
         jobs[jobId] = j;
     }
 
+    // Extended setter for challenge tests: sets hook, status, and time fields.
+    function setJobFull(
+        uint256 jobId, address client, address provider, uint256 budget,
+        address hookAddr, IERC8183Core.JobStatus status,
+        uint48 expiredAt, uint48 submittedAt
+    ) external {
+        IERC8183Core.Job memory j;
+        j.client      = client;
+        j.provider    = provider;
+        j.budget      = budget;
+        j.hook        = hookAddr;
+        j.status      = status;
+        j.expiredAt   = expiredAt;
+        j.submittedAt = submittedAt;
+        jobs[jobId] = j;
+    }
+
     function getJob(uint256 jobId) external view returns (IERC8183Core.Job memory) {
         return jobs[jobId];
     }
@@ -73,9 +90,9 @@ contract BondHookTest is Test {
     // and pushed via setProviderBondRate; this test asserts the on-chain
     // math at each end of the legal range.
     //   Bronze × Calibrated  = 20000 (200%, default)
-    //   Gold   × Edge-G      = 12500 × 8000 / 10000 = 10000 (100%, floor)
+    //   Gold   x Edge-G      = 13750 x 8000 / 10000 = 11000 (110%, floor)
     uint256 constant BRONZE_BPS = 20000;
-    uint256 constant MIN_BPS    = 10000;
+    uint256 constant MIN_BPS    = 11000;
 
     function setUp() public {
         usdc = new MockUSDC();
@@ -277,7 +294,7 @@ contract BondHookTest is Test {
     function test_LowerRate_LocksLowerBond() public {
         // Push provider to the math floor (Gold × Edge-G), then graduate past
         // the new-provider budget cap so we can fund a larger job.
-        _setRate(MIN_BPS); // 10000 bps = 100%
+        _setRate(MIN_BPS); // 11000 bps = 110%
 
         _deposit(100 * USDC_1);
         for (uint256 i = 1; i <= 10; i++) {
@@ -285,7 +302,7 @@ contract BondHookTest is Test {
         }
 
         _fundJob(11, 5 * USDC_1);
-        assertEq(hook.jobBondLocked(11), 5 * USDC_1); // 100% of 5 USDC
+        assertEq(hook.jobBondLocked(11), (5 * USDC_1 * MIN_BPS) / 10000); // 110% of 5 USDC = 5.5
     }
 
     /// @dev Rate changes only affect NEW locks. Job 1 locked at Bronze (200%)
@@ -294,20 +311,20 @@ contract BondHookTest is Test {
         _deposit(4 * USDC_1);
         _fundJob(1, USDC_1); // locks 2 USDC at default Bronze
 
-        _setRate(MIN_BPS); // promote to floor (100%)
+        _setRate(MIN_BPS); // promote to floor (110%)
 
         assertEq(hook.jobBondLocked(1), 2 * USDC_1); // unchanged
         assertEq(hook.bondLocked(provider), 2 * USDC_1);
 
         _fundJob(2, USDC_1); // new lock at new rate
-        assertEq(hook.jobBondLocked(2), USDC_1); // 100% of 1 USDC
+        assertEq(hook.jobBondLocked(2), (USDC_1 * MIN_BPS) / 10000); // 110% of 1 USDC = 1.1
     }
 
     // ══════════════════════════════════════════════════════════
     // 4. Slash — 80/20 split, balances, events
     // ══════════════════════════════════════════════════════════
 
-    function test_Slash_Splits80Consumer20Treasury() public {
+    function test_Slash_ConsumerFull_TreasuryRemainder() public {
         _deposit(2 * USDC_1);
         _fundJob(1, USDC_1); // locks 2 USDC
 
@@ -317,8 +334,10 @@ contract BondHookTest is Test {
 
         core.driveAfterReject(1, hook.SLASH_REASON());
 
-        assertEq(usdc.balanceOf(consumer), (lockAmt * 80) / 100); // 1.6 USDC
-        assertEq(usdc.balanceOf(treasury), (lockAmt * 20) / 100); // 0.4 USDC
+        // budget = 1 USDC, lockAmt = 2 USDC (Bronze 200%).
+        // consumer = budget (100%), treasury = lockAmt - budget, challenger = 0.
+        assertEq(usdc.balanceOf(consumer), USDC_1);            // 1.0 USDC (full price)
+        assertEq(usdc.balanceOf(treasury), lockAmt - USDC_1);  // 1.0 USDC (remainder)
         assertEq(hook.bondBalance(provider), 0);
         assertEq(hook.bondLocked(provider), 0);
         assertEq(hook.jobBondLocked(1), 0);
@@ -326,17 +345,16 @@ contract BondHookTest is Test {
     }
 
     /// @dev Floor invariant: at the minimum allowed rate, slash still meets the
-    ///      job budget exactly. Consumer gets 80% of budget, treasury 20%.
+    ///      job budget exactly. Consumer gets 100% of budget, treasury = remainder.
     function test_Slash_AtFloor_StillCoversBudget() public {
-        _setRate(MIN_BPS);
-        _deposit(USDC_1);
-        _fundJob(1, USDC_1); // locks 1 USDC at 100%
-
+        _setRate(MIN_BPS);            // 11000 bps = 110%
+        _deposit((USDC_1 * MIN_BPS) / 10000); // deposit exactly the 1.1 USDC lock
+        _fundJob(1, USDC_1);          // budget 1 USDC, locks 1.1 USDC at 110%
+        uint256 lockAmt = (USDC_1 * MIN_BPS) / 10000; // 1.1 USDC
         core.driveAfterReject(1, hook.SLASH_REASON());
-
-        // Lock equals budget → 80/20 of the budget itself
-        assertEq(usdc.balanceOf(consumer), (USDC_1 * 80) / 100);
-        assertEq(usdc.balanceOf(treasury), (USDC_1 * 20) / 100);
+        // consumer = budget (100%), treasury = lockAmt - budget (10%), challenger = 0
+        assertEq(usdc.balanceOf(consumer), USDC_1);
+        assertEq(usdc.balanceOf(treasury), lockAmt - USDC_1);
         assertEq(hook.bondBalance(provider), 0);
     }
 
@@ -429,4 +447,110 @@ contract BondHookTest is Test {
         assertEq(hook.providerJobCount(provider), 1);    // count is now idempotent too
         assertTrue(hook.jobCounted(1));
     }
+
+    // ══════════════════════════════════════════════════════════
+    // 7. Permissionless deterministic challenge
+    // ══════════════════════════════════════════════════════════
+
+    /// Helper: fund a job (locks bond), then overwrite core state to `expired`.
+    function _fundThenExpire(uint256 jobId, uint256 budget) internal {
+        vm.warp(1_000_000);      // advance clock so expiredAt can be a real past value
+        _deposit(4 * USDC_1);
+        _fundJob(jobId, budget); // locks bond at Bronze 200%
+        // Overwrite core job: same provider/client/budget, but expired + our hook.
+        core.setJobFull(
+            jobId, consumer, provider, budget,
+            address(hook), IERC8183Core.JobStatus.Submitted,
+            uint48(block.timestamp - 100), uint48(0) // expiredAt in the past
+        );
+    }
+
+    function _arm(address who, uint256 amount) internal {
+        usdc.mint(who, amount);
+        vm.prank(who);
+        usdc.approve(address(hook), amount);
+    }
+
+    function test_Challenge_ExpiredSquatter_Slashes() public {
+        _fundThenExpire(1, USDC_1);          // budget 1, lock 2 USDC (Bronze)
+        uint256 stake = USDC_1 / 10;         // price/10 = 0.1
+        _arm(rando, stake);
+
+        uint256 lockAmt = hook.jobBondLocked(1);
+        vm.prank(rando);
+        hook.challenge(1);
+
+        // consumer 100% of price, challenger 10% of price, treasury remainder, stake returned
+        assertEq(usdc.balanceOf(consumer), USDC_1);                 // full price
+        assertEq(usdc.balanceOf(rando), (USDC_1/10) + stake);       // 10% reward + stake returned = 0.2
+        assertEq(usdc.balanceOf(treasury), lockAmt - USDC_1 - (USDC_1/10)); // remainder
+        assertEq(hook.jobBondLocked(1), 0);
+    }
+
+    function test_Challenge_PostExpirySubmit_Slashes() public {
+        _deposit(4 * USDC_1);
+        _fundJob(2, USDC_1);
+        // submittedAt > expiredAt (post-expiry submission), status Submitted, not yet time-expired
+        core.setJobFull(
+            2, consumer, provider, USDC_1,
+            address(hook), IERC8183Core.JobStatus.Submitted,
+            uint48(block.timestamp + 1000), uint48(block.timestamp + 2000)
+        );
+        uint256 stake = USDC_1 / 10;
+        _arm(rando, stake);
+
+        vm.prank(rando);
+        hook.challenge(2);
+        assertEq(usdc.balanceOf(consumer), USDC_1);
+        assertEq(hook.jobBondLocked(2), 0);
+    }
+
+    function test_Challenge_ValidJob_Reverts_StakeForfeited() public {
+        _deposit(4 * USDC_1);
+        _fundJob(3, USDC_1);
+        // Valid job: not expired, submittedAt <= expiredAt, our hook.
+        core.setJobFull(
+            3, consumer, provider, USDC_1,
+            address(hook), IERC8183Core.JobStatus.Submitted,
+            uint48(block.timestamp + 1000), uint48(block.timestamp + 500)
+        );
+        uint256 stake = USDC_1 / 10;
+        _arm(rando, stake);
+
+        vm.prank(rando);
+        hook.challenge(3); // false challenge: does NOT revert, forfeits stake
+
+        assertEq(usdc.balanceOf(treasury), stake);   // stake forfeited to treasury
+        assertEq(usdc.balanceOf(rando), 0);           // challenger lost stake
+        assertEq(hook.jobBondLocked(3), USDC_1 * 2);  // job untouched (still locked)
+    }
+
+    function test_Challenge_Settled_Reverts() public {
+        _deposit(4 * USDC_1);
+        _completeJob(4, USDC_1); // funds then completes -> bond unlocked, jobBondLocked = 0
+        uint256 stake = USDC_1 / 10;
+        _arm(rando, stake);
+
+        vm.prank(rando);
+        vm.expectRevert(abi.encodeWithSelector(BondHook.NotChallengeable.selector, uint256(4)));
+        hook.challenge(4);
+    }
+
+    function test_Challenge_WrongHook_Reverts() public {
+        _deposit(4 * USDC_1);
+        _fundJob(5, USDC_1);
+        // Overwrite with a DIFFERENT hook address -> not our job.
+        core.setJobFull(
+            5, consumer, provider, USDC_1,
+            address(0xBEEF), IERC8183Core.JobStatus.Submitted,
+            uint48(block.timestamp - 1), uint48(0)
+        );
+        uint256 stake = USDC_1 / 10;
+        _arm(rando, stake);
+
+        vm.prank(rando);
+        vm.expectRevert(abi.encodeWithSelector(BondHook.NotChallengeable.selector, uint256(5)));
+        hook.challenge(5);
+    }
+
 }

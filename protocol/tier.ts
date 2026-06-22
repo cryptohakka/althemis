@@ -4,8 +4,8 @@
  *
  *   Reliability (deterministic): Phase A verified count.
  *     Bronze:  0 –  9   verified → 20000 bps (200%)
- *     Silver: 10 – 49   verified → 16000 bps (160%)
- *     Gold:   50+       verified → 12500 bps (125%)
+ *     Silver: 10 - 49   verified -> 16500 bps (165%)
+ *     Gold:   50+       verified -> 13750 bps (137.5%)
  *     Reset to 0 on Phase A slash (fabrication).
  *
  *   Skill (probabilistic): cumulative Wilson 95% lower bound on Phase B win rate.
@@ -20,7 +20,7 @@
  *
  *   Effective bond rate (basis points):
  *     rateBps = reliabilityBps × skillDiscount / 10000
- *     Math floor: Gold × Edge-G = 12500 × 0.80 = 10000 (100%, BondHook MIN floor).
+ *     Math floor: Gold x Edge-G = 13750 x 0.80 = 11000 (110%, BondHook MIN floor).
  *
  *   On-chain push: only when rateBps changes. Existing job locks are immutable
  *   (BondHook stores lockAmt at fund time).
@@ -45,8 +45,8 @@ const GOLD_VERIFIED_MIN   = 50;
 
 // ── Reliability rates (basis points) ────────────────────────
 const BRONZE_BPS = 20000;
-const SILVER_BPS = 16000;
-const GOLD_BPS   = 12500;
+const SILVER_BPS = 16500;
+const GOLD_BPS   = 13750;
 
 // ── Skill tier thresholds (Wilson 95% lower bound) ──────────
 const SKILL_MIN_N         = 20;
