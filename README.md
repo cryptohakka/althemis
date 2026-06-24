@@ -15,6 +15,12 @@ distinction the category has not made: a deterministic lie-axis (slashable)
 separated from a probabilistic error-axis (reputation-only) — enforced by
 falsification discipline against our own signal, not just our competitors'.
 
+**[Demo Video](TODO: 3-min demo video link)** · **[Live Dashboard](TODO: live link)** · **One-command repro:** `forge test --match-path "contracts/test/BondHook.t.sol"` (31/31 passing)
+
+**Proof:** autonomous slash on Arc Testnet — [`0x021e0422...`](https://testnet.arcscan.app/tx/0x021e0422d5752137eabdf3c1d0d90d93cfb71856216790230bdeb2c8cd44a8a8)
+
+**Built with:** Arc Testnet · USDC · Circle Gateway Nanopayments (x402) · Foundry · viem
+
 ---
 
 ## Core Principle
@@ -124,6 +130,24 @@ Why the split: a fabrication is a deterministic fact, so it drives the slashable
 When an attestation is proven fabricated, the slashed bond is distributed three ways in `BondHook.sol`: **100% of the job price to the harmed Consumer** (always), **10% of the price to the challenger** (on a permissionless deterministic challenge only; zero on an oracle-initiated Phase A slash), and **the remainder to the protocol treasury**. The 110% bond floor guarantees that `consumer (100%) + challenger (10%)` always fit inside the locked amount.
 
 The challenger reward exists because Althemis already supports **permissionless deterministic challenges** for two cases an honest oracle alone would miss: expired squatters and post-expiry submissions (`stake = budget / 10`, forfeited to treasury on a wrong challenge). A broader 60/20/20 filer reward for *interpretive* disputes is deferred to v2, where it ships with the decentralized Adjudicator — see Known Limitations & Roadmap.
+
+### About the Council
+
+The **Triple-A Council** (Architect / Auditor / Arbiter debate, reused from
+earlier agent systems by the same author) is `CBUYER`'s internal decision
+logic for whether to act on a purchased signal — it is **not** part of the
+protocol. Council verdicts are advisory only: they are logged (`snapshots.json`
+and the agent's own history) but have **no write path to any contract call**.
+Provider reliability, Oracle settlement, and the slash path are entirely
+unaffected by what Council decides.
+
+This is deliberate, not a missing feature. The protocol's core principle —
+deterministic punishment, probabilistic reputation — only holds if the
+*judgment* layer (was this signal worth acting on?) stays separate from the
+*verification* layer (was this signal honest?). Wiring Council's verdict into
+settlement would reintroduce exactly the conflation Althemis is built to avoid:
+an LLM's contextual judgment call would start to influence a slash decision
+that must remain reproducible and deterministic.
 
 ## Status
 
