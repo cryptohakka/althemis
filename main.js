@@ -1,137 +1,157 @@
 import 'dotenv/config';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const { fetchAllSignals } = require('./providers.js');
-const { runConsumerCycle } = require('./council.js');
-import { createWalletClient, http, parseUnits, keccak256, toBytes,
-         decodeEventLog, parseAbi } from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
-import { getPublicClient, arcChain } from './protocol/arc.js';
+import { fetchAllSignals } from './providers.js';
+import { runConsumerCycle } from './council.js';
+import { parseUnits, parseAbi } from 'viem';
+import { getPublicClient, loadRoster } from './protocol/arc.js';
 import {
-  ERC8183_ADDRESS, BOND_HOOK_ADDRESS, USDC_ADDRESS,
-  ERC8183_ABI, BOND_HOOK_ABI, getJob, getFreeBalance, JobStatus,
+  USDC_ADDRESS,
+  getJob, getFreeBalance, getProviderBondRate, JobStatus,
+  createJob, setBudget, fundJob, submitSignal, depositBond,
+  getChallengeableJobs, getJobBudget, challengeJob,
 } from './protocol/escrow.js';
+import { loadJobState, saveJobState } from './protocol/job-state.js';
+import { getPolicy, getActiveProviders, getActiveRoles } from './protocol/roster.config.js';
 
 const CYCLE_MS       = parseInt(process.env.CYCLE_INTERVAL_MS || '300000');
-const JOB_STATE_FILE = './data/job_state.json';
-const FR_HISTORY_FILE = './fr_history.json';
+const SUBMIT_NEUTRAL = process.env.SUBMIT_NEUTRAL !== 'false'; // testnet default: true
+
+// ── Rollout phase (operator-controlled checkpoint, NOT auto-detected) ──
+// 1 = PCHEAP solo (drives verifiedCount -> Gold with zero other supply,
+//     zero buyer favoritism — see roster.config.ts header).
+// 2 = PHONEST/PLIAR also active. job-state Map already supports concurrent
+//     per-role jobs (Step 3). Flip via .env ROLLOUT_PHASE=2 ONLY AFTER
+//     confirming PCHEAP has actually reached Gold on-chain — this value is
+//     read once at process startup, NOT live-reloaded. Changing it requires
+//     systemctl restart althemis (see job-state.js incident — pair stop/start
+//     in one script, never split across sessions).
+// NOTE: XCHAL is listed as phase 2 in roster.config.ts but has NO tick logic
+// here — escrow.ts has no permissionless-challenge TS wrapper yet (the
+// Solidity side exists per contract-core completion, but the TS call site
+// doesn't). XCHAL activation is a separate prerequisite task, not part of
+// this step.
+const ROLLOUT_PHASE = parseInt(process.env.ROLLOUT_PHASE || '1');
 
 const USDC_ABI = parseAbi([
-  'function approve(address spender, uint256 amount) returns (bool)',
-  'function balanceOf(address) view returns (uint256)',
   'function decimals() view returns (uint8)',
 ]);
 
-// ── viem クライアント ──────────────────────────────────────────
-const pub          = getPublicClient();
-const chain        = arcChain;
-const consumerAcct = privateKeyToAccount(process.env.CONSUMER_PRIVATE_KEY);
-const providerAcct = privateKeyToAccount(process.env.PROVIDER_PRIVATE_KEY);
-const consumer     = createWalletClient({ account: consumerAcct, chain, transport: http(process.env.ARC_RPC_URL) });
-const provider     = createWalletClient({ account: providerAcct, chain, transport: http(process.env.ARC_RPC_URL) });
+// ── viem clients — all 5 roster wallets built once at startup ──────────
+const pub    = getPublicClient();
+const roster = loadRoster(); // { PCHEAP, PHONEST, PLIAR, CBUYER, XCHAL }
+const cbuyer = roster.CBUYER;
 
-// ── Job state 管理 ─────────────────────────────────────────────
-function loadJobState() {
-  if (!existsSync(JOB_STATE_FILE)) return {};
-  return JSON.parse(readFileSync(JOB_STATE_FILE, 'utf-8'));
-}
-function saveJobState(state) {
-  writeFileSync(JOB_STATE_FILE, JSON.stringify(state, null, 2));
+// ── Job state (Map<role, record>; shared format via protocol/job-state.js) ─
+function persistJobState() { saveJobState(jobState); }
+const jobState = loadJobState();
+
+async function syncFromChain(stateMap) {
+  for (const [role, record] of stateMap) {
+    const job = await getJob(BigInt(record.jobId));
+    const statusName = JobStatus[job.status];
+    if (job.status === JobStatus.Completed ||
+        job.status === JobStatus.Rejected  ||
+        job.status === JobStatus.Expired) {
+      console.log(`[job-state] ${role} job #${record.jobId} settled (${statusName}) — clearing`);
+      stateMap.delete(role);
+    } else if (record.status !== statusName) {
+      console.log(`[job-state] ${role} job #${record.jobId} status ${record.status ?? '?'} -> ${statusName}`);
+      record.status = statusName;
+    }
+  }
+  persistJobState();
 }
 
-async function writeTx(client, req) {
-  const hash = await client.writeContract({ ...req, account: client.account, chain });
-  const rc   = await pub.waitForTransactionReceipt({ hash });
-  if (rc.status !== 'success') throw new Error(`tx reverted: ${hash}`);
-  return rc;
-}
+// Demo-proven fabrication payload — identical to fabricate.mjs's FAKE_DESC,
+// already verified to trigger Phase A slash under the current threshold.
+// Fixed (not randomized) so the dishonest path stays deterministic and
+// reproducible for the demo, independent of real market conditions.
+const FABRICATED_DESCRIPTION = 'FR_BTC_8h=0.005;z=99;dir=long';
 
-// ── Provider Job submit ────────────────────────────────────────
-async function submitProviderJob(frSig) {
-  const SUBMIT_NEUTRAL = process.env.SUBMIT_NEUTRAL !== 'false'; // testnet default: true
-  if (frSig.direction === 'neutral' && !SUBMIT_NEUTRAL) {
-    console.log('[provider-job] neutral signal — skip (SUBMIT_NEUTRAL=false)');
+// ── Generic per-provider tick ───────────────────────────────────────────
+// One role, one job lifecycle: skip-if-active -> honesty roll -> bond
+// check -> createJob(by CBUYER) -> setBudget(by provider) ->
+// fundJob(by CBUYER) -> submitSignal(by provider).
+async function tickProvider(role, frSig, dec) {
+  if (jobState.has(role)) {
+    const record = jobState.get(role);
+    console.log(`[provider-job] ${role} job #${record.jobId} still active (${record.status}) — skip`);
     return;
   }
 
-  const state = loadJobState();
+  const policy    = getPolicy(role);
+  const agent     = roster[role];
+  const fabricate = Math.random() < policy.fabricationProb;
 
-  // アクティブな job があればスキップ
-  if (state.jobId) {
-    const job = await getJob(BigInt(state.jobId));
-    if (job.status === JobStatus.Open ||
-        job.status === JobStatus.Funded ||
-        job.status === JobStatus.Submitted) {
-      console.log(`[provider-job] job #${state.jobId} still active (${JobStatus[job.status]}) — skip`);
+  let description;
+  if (fabricate) {
+    description = FABRICATED_DESCRIPTION;
+    console.log(`[provider-job] ${role} honesty roll: FABRICATE (p=${policy.fabricationProb})`);
+  } else {
+    if (frSig.direction === 'neutral' && !SUBMIT_NEUTRAL) {
+      console.log(`[provider-job] ${role} neutral signal — skip (SUBMIT_NEUTRAL=false)`);
       return;
     }
+    const frValue = parseFloat(frSig.avgFR.toFixed(8));
+    description = `FR_BTC_8h=${frValue};z=${frSig.frZ};dir=${frSig.direction}`;
   }
 
-  const dec    = await pub.readContract({ address: USDC_ADDRESS, abi: USDC_ABI, functionName: 'decimals' });
-  const budget = parseUnits('1', dec);
+  const budget = parseUnits(policy.budgetUSDC.toString(), dec);
 
-  // Bond 確認・補充
-  const free       = await getFreeBalance(providerAcct.address);
-  const bondNeeded = parseUnits('2', dec);
+  // Bond requirement scales with THIS role's budget and THIS role's
+  // on-chain rate (bps) — not a flat constant. A fixed "2 USDC" assumed
+  // budget=1 USDC @ 200%; that breaks the moment budgets differ per role
+  // (PCHEAP sub-cent vs PHONEST/PLIAR standard).
+  const rateBps    = await getProviderBondRate(agent.address);
+  const bondNeeded = (budget * rateBps) / 10000n;
+  const free       = await getFreeBalance(agent.address);
   if (free < bondNeeded) {
-    console.log('[provider-job] topping up bond...');
-    await writeTx(provider, {
-      address: USDC_ADDRESS, abi: USDC_ABI, functionName: 'approve',
-      args: [BOND_HOOK_ADDRESS, bondNeeded],
-    });
-    await writeTx(provider, {
-      address: BOND_HOOK_ADDRESS, abi: BOND_HOOK_ABI, functionName: 'deposit',
-      args: [bondNeeded],
-    });
+    console.log(`[provider-job] ${role} topping up bond (need ${bondNeeded}, have ${free})...`);
+    await depositBond(agent.client, bondNeeded);
   }
 
-  // description: oracle.ts の decodeDelivery 形式
-  const frValue     = parseFloat(frSig.avgFR.toFixed(8));
-  const description = `FR_BTC_8h=${frValue};z=${frSig.frZ};dir=${frSig.direction}`;
-  const deliverable = keccak256(toBytes(description));
-  const expiredAt   = Math.floor(Date.now() / 1000) + 86400;
+  const jobId = await createJob(cbuyer.client, {
+    provider: agent.address,
+    description,
+  });
+  await setBudget(agent.client, jobId, budget);
+  await fundJob(cbuyer.client, jobId, budget);
+  await submitSignal(agent.client, jobId, description);
 
-  // createJob
-  const rcCreate = await writeTx(consumer, {
-    address: ERC8183_ADDRESS, abi: ERC8183_ABI, functionName: 'createJob',
-    args: [providerAcct.address, process.env.ORACLE_WALLET_ADDRESS,
-           expiredAt, description, BOND_HOOK_ADDRESS, 0n],
+  jobState.set(role, {
+    jobId: jobId.toString(), description,
+    submittedAt: new Date().toISOString(), status: 'Submitted',
+    fabricated: fabricate,
   });
-  let jobId;
-  for (const l of rcCreate.logs) {
-    try {
-      const ev = decodeEventLog({ abi: ERC8183_ABI, data: l.data, topics: l.topics });
-      if (ev.eventName === 'JobCreated') { jobId = ev.args.jobId; break; }
-    } catch {}
-  }
-  if (jobId === undefined) throw new Error('JobCreated event not found');
-
-  // setBudget → approve → fund
-  await writeTx(provider, {
-    address: ERC8183_ADDRESS, abi: ERC8183_ABI, functionName: 'setBudget',
-    args: [jobId, USDC_ADDRESS, budget, '0x'],
-  });
-  await writeTx(consumer, {
-    address: USDC_ADDRESS, abi: USDC_ABI, functionName: 'approve',
-    args: [ERC8183_ADDRESS, budget],
-  });
-  await writeTx(consumer, {
-    address: ERC8183_ADDRESS, abi: ERC8183_ABI, functionName: 'fund',
-    args: [jobId, budget, '0x'],
-  });
-
-  // submit
-  await writeTx(provider, {
-    address: ERC8183_ADDRESS, abi: ERC8183_ABI, functionName: 'submit',
-    args: [jobId, deliverable, '0x'],
-  });
-
-  saveJobState({ jobId: jobId.toString(), description, submittedAt: new Date().toISOString() });
-  console.log(`[provider-job] job #${jobId} submitted: ${description}`);
+  persistJobState();
+  console.log(`[provider-job] ${role} job #${jobId} submitted: ${description}`);
 }
 
-// ── Main cycle ─────────────────────────────────────────────────
+// ── Generic challenger tick ─────────────────────────────────────────────
+// XCHAL sweeps BondHook for currently-challengeable jobs (expired squatter /
+// post-expiry submit) and fires challenge() on each. Never reverts on a
+// miss -- contract either slashes (success) or forfeits XCHAL's stake to
+// treasury via ChallengeRejected (failure). Sequential per call: single
+// XCHAL wallet, avoid self-inflicted nonce races across multiple candidates.
+async function tickChallenger() {
+  const candidates = await getChallengeableJobs();
+  if (candidates.length === 0) {
+    console.log('[challenger] no challengeable jobs this cycle');
+    return;
+  }
+  for (const job of candidates) {
+    try {
+      const budget = await getJobBudget(job.jobId);
+      const stake  = budget / 10n;
+      console.log(`[challenger] XCHAL challenging job # (stake=)`);
+      const hash = await challengeJob(roster.XCHAL.client, job.jobId, stake);
+      console.log(`[challenger] job # challenge tx=`);
+    } catch (e) {
+      console.error(`[challenger] job # challenge failed: `);
+    }
+  }
+}
+
+// ── Main cycle ───────────────────────────────────────────────────────────
 async function runCycle() {
   console.log(`\n[main] cycle start ${new Date().toISOString()}`);
   try {
@@ -139,16 +159,32 @@ async function runCycle() {
     const verdict = await runConsumerCycle(signals);
     console.log(`[main] done — action=${verdict.action} conf=${verdict.confidence} cal=${verdict.calibrated} DI=${verdict.disagreementIndex}`);
 
-    // FR providerシグナルをそのままjob化(direction/frZ込み)
-    if (signals.fr.baselineReady) {
-      await submitProviderJob(signals.fr);
-    } else {
+    if (!signals.fr.baselineReady) {
       console.log('[provider-job] FR baseline not ready — skip');
+      return;
+    }
+
+    await syncFromChain(jobState);
+
+    const dec = await pub.readContract({ address: USDC_ADDRESS, abi: USDC_ABI, functionName: 'decimals' });
+    const activeProviders = getActiveProviders(ROLLOUT_PHASE);
+
+    // Sequential on purpose: every provider job is created/funded by the
+    // SAME CBUYER wallet. Concurrent writeContract calls from one client
+    // risk nonce collisions — process roles one at a time, not Promise.all.
+    for (const { role } of activeProviders) {
+      await tickProvider(role, signals.fr, dec);
+    }
+
+    const activeRoles = getActiveRoles(ROLLOUT_PHASE);
+    if (activeRoles.includes('XCHAL')) {
+      await tickChallenger();
     }
   } catch (e) {
     console.error('[main] cycle error:', e.message);
   }
 }
 
+console.log(`[main] rollout phase=${ROLLOUT_PHASE} active providers=${getActiveProviders(ROLLOUT_PHASE).map(p => p.role).join(',')}`);
 runCycle();
 setInterval(runCycle, CYCLE_MS);

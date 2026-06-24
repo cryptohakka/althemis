@@ -1,17 +1,12 @@
 // submit-honest.mjs — submit ONE honest FR attestation (VERIFIED path).
 //
-// Purpose: produce an on-chain SLASH tx under the CURRENT fabrication
-//   threshold max(3×MAD, 0.0001), as evidence for the README.
+// Positive-path counterpart to fabricate.mjs for the README.
+// We submit 0.00001 (~6-CEX median), well inside max(3×MAD, 1e-4), so Phase A
+// verifies it: NO slash, verifiedCount increments, bondRateBps stays 20000.
 //
-// The honest 6-CEX median for BTC 8h FR sits around 1e-5. We submit 0.005
-// (5e-3), which is ~300× the floor away from any plausible median — this
-// is unambiguous fabrication, not a borderline value. The oracle's Phase A
-// will detect it on the next poll and call slashJob() automatically.
-//
-// THIS BURNS 80% OF THE LOCKED BOND (testnet USDC). Run with main stopped.
+// Run with main stopped (standalone demo path).
 
 import 'dotenv/config';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { createWalletClient, http, parseUnits, keccak256, toBytes,
          decodeEventLog } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -23,10 +18,11 @@ import {
   ERC8183_ADDRESS, BOND_HOOK_ADDRESS, USDC_ADDRESS,
   ERC8183_ABI, BOND_HOOK_ABI, getFreeBalance,
 } from './protocol/escrow.js';
+import { upsertJobState } from './protocol/job-state.js';
 
-const JOB_STATE_FILE = './data/job_state.json';
-const FAKE_FR = 0.00001;            // honest: ~6-CEX median, well inside max(3*MAD, 1e-4)
-const FAKE_DESC = `FR_BTC_8h=${FAKE_FR};z=0.3;dir=long`;
+const ROLE      = process.env.ROLE || 'PHONEST'; // job_state tracking slot
+const HONEST_FR = 0.00001;          // ~6-CEX median, inside max(3*MAD, 1e-4)
+const DESC      = `FR_BTC_8h=${HONEST_FR};z=0.3;dir=long`;
 
 const USDC_ABI = parseAbi([
   'function approve(address spender, uint256 amount) returns (bool)',
@@ -52,7 +48,6 @@ async function main() {
   const budget = parseUnits('1', dec);
   const bondNeeded = parseUnits('2', dec);
 
-  // Confirm bond coverage (Bronze 200% of 1 USDC budget = 2 USDC)
   const free = await getFreeBalance(providerAcct.address);
   console.log(`[honest] provider free bond: ${free} (need ${bondNeeded})`);
   if (free < bondNeeded) {
@@ -67,16 +62,15 @@ async function main() {
     });
   }
 
-  const deliverable = keccak256(toBytes(FAKE_DESC));
+  const deliverable = keccak256(toBytes(DESC));
   const expiredAt   = Math.floor(Date.now() / 1000) + 86400;
 
-  console.log(`[honest] creating job with HONEST signal: ${FAKE_DESC}`);
+  console.log(`[honest] creating job with HONEST signal: ${DESC}`);
 
-  // createJob
   const rcCreate = await writeTx(consumer, {
     address: ERC8183_ADDRESS, abi: ERC8183_ABI, functionName: 'createJob',
     args: [providerAcct.address, process.env.ORACLE_WALLET_ADDRESS,
-           expiredAt, FAKE_DESC, BOND_HOOK_ADDRESS, 0n],
+           expiredAt, DESC, BOND_HOOK_ADDRESS, 0n],
   });
   let jobId;
   for (const l of rcCreate.logs) {
@@ -104,13 +98,13 @@ async function main() {
     args: [jobId, deliverable, '0x'],
   });
 
-  // Persist so the oracle picks it up; main stays stopped meanwhile.
-  writeFileSync(JOB_STATE_FILE, JSON.stringify(
-    { jobId: jobId.toString(), description: FAKE_DESC, submittedAt: new Date().toISOString(), fabricated: false },
-    null, 2));
+  // Persist under this role WITHOUT clobbering other roles' records.
+  upsertJobState(ROLE, {
+    jobId: jobId.toString(), description: DESC,
+    submittedAt: new Date().toISOString(), status: 'Submitted', fabricated: false,
+  });
 
-  console.log(`[honest] job #${jobId} submitted with HONEST signal.`);
-  console.log(`[honest] watch oracle for: VERIFIED -> recordVerified -> verifiedCount+1`);
+  console.log(`[honest] job #${jobId} submitted with HONEST signal (role=${ROLE}).`);
   console.log(`[honest] expect: VERIFIED -> verifiedCount 0->1, bondRateBps stays 20000`);
 }
 

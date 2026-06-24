@@ -6,8 +6,8 @@
  * Plus bond helpers: deposit / withdraw / freeBalance / setProviderBondRate
  */
 import 'dotenv/config';
-import { parseAbi, encodeFunctionData, type Address, type Hex } from 'viem';
-import { getPublicClient, getOracleClient, getOracleAddress } from './arc.js';
+import { parseAbi, encodeFunctionData, decodeEventLog, type Address, type Hex } from 'viem';
+import { getPublicClient, getOracleClient, getOracleAddress, makeWalletClient } from './arc.js';
 
 // ── Contract addresses (from .env) ────────────────────────────
 export const ERC8183_ADDRESS  = process.env.ERC8183_ADDRESS  as Address;
@@ -51,9 +51,14 @@ export const BOND_HOOK_ABI = parseAbi([
   'function DEFAULT_BOND_RATE_BPS() view returns (uint256)',
   'function MIN_BOND_RATE_BPS() view returns (uint256)',
   'function SLASH_REASON() view returns (bytes32)',
+  'function challenge(uint256 jobId)',
+  'function jobBondLocked(uint256 jobId) view returns (uint256)',
+  'function jobBudget(uint256 jobId) view returns (uint256)',
   'event BondDeposited(address indexed provider, uint256 amount)',
   'event BondSlashed(uint256 indexed jobId, address indexed provider, uint256 amount, address consumer, address treasury)',
   'event BondRateUpdated(address indexed provider, uint256 newRateBps)',
+  'event BondChallenged(uint256 indexed jobId, address indexed challenger, uint256 reward)',
+  'event ChallengeRejected(uint256 indexed jobId, address indexed challenger, uint256 stakeForfeited)',
 ]);
 
 // ── USDC ABI (approve + balanceOf) ───────────────────────────
@@ -82,6 +87,15 @@ export interface Job {
   hook:         Address;
   paymentToken: Address;
   description:  string;
+}
+
+// ── tx helper ───────────────────────────────────────────────────
+/** Wait for a tx receipt and throw if it reverted. Shared by all write helpers below. */
+async function waitForSuccess(hash: Hex, label: string) {
+  const pub = getPublicClient();
+  const rc = await pub.waitForTransactionReceipt({ hash });
+  if (rc.status !== 'success') throw new Error(`${label} tx reverted: ${hash}`);
+  return rc;
 }
 
 // ── Read helpers ──────────────────────────────────────────────
@@ -161,6 +175,90 @@ export async function getSlashReason(): Promise<Hex> {
   }) as Promise<Hex>;
 }
 
+// ── Consumer-side helpers (job creation / funding) ────────────
+
+/**
+ * Consumer: create a new job. Waits for receipt, decodes JobCreated, returns jobId.
+ * evaluator defaults to the oracle address; hook defaults to BondHook.
+ */
+export async function createJob(
+  walletClient: ReturnType<typeof makeWalletClient>,
+  params: {
+    provider: Address;
+    description: string;
+    evaluator?: Address;
+    hook?: Address;
+    expiredAt?: number;        // unix seconds; default now + 24h
+    providerAgentId?: bigint;  // default 0n
+  },
+): Promise<bigint> {
+  const evaluator      = params.evaluator      ?? getOracleAddress();
+  const hook           = params.hook           ?? BOND_HOOK_ADDRESS;
+  const expiredAt      = params.expiredAt      ?? Math.floor(Date.now() / 1000) + 86400;
+  const providerAgentId = params.providerAgentId ?? 0n;
+
+  const hash = await walletClient.writeContract({
+    address: ERC8183_ADDRESS,
+    abi: ERC8183_ABI,
+    functionName: 'createJob',
+    args: [params.provider, evaluator, expiredAt, params.description, hook, providerAgentId],
+    chain: walletClient.chain!,
+  });
+  const rc = await waitForSuccess(hash, 'createJob');
+
+  for (const log of rc.logs) {
+    try {
+      const ev = decodeEventLog({ abi: ERC8183_ABI, data: log.data, topics: log.topics });
+      if (ev.eventName === 'JobCreated') return ev.args.jobId as bigint;
+    } catch {}
+  }
+  throw new Error(`JobCreated event not found in createJob receipt: ${hash}`);
+}
+
+/** Provider: set the budget (price) for a job. */
+export async function setBudget(
+  walletClient: ReturnType<typeof makeWalletClient>,
+  jobId: bigint,
+  amount: bigint,
+  token: Address = USDC_ADDRESS,
+): Promise<Hex> {
+  const hash = await walletClient.writeContract({
+    address: ERC8183_ADDRESS,
+    abi: ERC8183_ABI,
+    functionName: 'setBudget',
+    args: [jobId, token, amount, '0x'],
+    chain: walletClient.chain!,
+  });
+  await waitForSuccess(hash, 'setBudget');
+  return hash;
+}
+
+/** Consumer: approve USDC then fund the job. Two sequential txs, each awaited. */
+export async function fundJob(
+  walletClient: ReturnType<typeof makeWalletClient>,
+  jobId: bigint,
+  amount: bigint,
+): Promise<Hex> {
+  const approveHash = await walletClient.writeContract({
+    address: USDC_ADDRESS,
+    abi: USDC_ABI,
+    functionName: 'approve',
+    args: [ERC8183_ADDRESS, amount],
+    chain: walletClient.chain!,
+  });
+  await waitForSuccess(approveHash, 'fundJob:approve');
+
+  const fundHash = await walletClient.writeContract({
+    address: ERC8183_ADDRESS,
+    abi: ERC8183_ABI,
+    functionName: 'fund',
+    args: [jobId, amount, '0x'],
+    chain: walletClient.chain!,
+  });
+  await waitForSuccess(fundHash, 'fundJob:fund');
+  return fundHash;
+}
+
 // ── Write helpers (oracle wallet) ─────────────────────────────
 
 /** Oracle: mark job complete (price verified) */
@@ -214,48 +312,48 @@ export async function setProviderBondRate(
 
 // ── Provider-side helpers (for examples/minimal-provider.ts) ──
 
-/** Provider: deposit USDC bond (requires prior USDC approve) */
+/** Provider: deposit USDC bond (requires prior USDC approve). Waits for both txs. */
 export async function depositBond(
-  walletClient: ReturnType<typeof getOracleClient>,
+  walletClient: ReturnType<typeof makeWalletClient>,
   amount: bigint,
 ): Promise<Hex> {
-  const addr = walletClient.account!.address;
-  // Approve BondHook to pull USDC
-  await walletClient.writeContract({
+  const approveHash = await walletClient.writeContract({
     address: USDC_ADDRESS,
     abi: USDC_ABI,
     functionName: 'approve',
     args: [BOND_HOOK_ADDRESS, amount],
-    account: addr,
     chain: walletClient.chain!,
   });
-  return walletClient.writeContract({
+  await waitForSuccess(approveHash, 'depositBond:approve');
+
+  const depositHash = await walletClient.writeContract({
     address: BOND_HOOK_ADDRESS,
     abi: BOND_HOOK_ABI,
     functionName: 'deposit',
     args: [amount],
-    account: addr,
     chain: walletClient.chain!,
   });
+  await waitForSuccess(depositHash, 'depositBond:deposit');
+  return depositHash;
 }
 
-/** Provider: submit signal as deliverable hash */
+/** Provider: submit signal as deliverable hash. Waits for receipt. */
 export async function submitSignal(
-  walletClient: ReturnType<typeof getOracleClient>,
+  walletClient: ReturnType<typeof makeWalletClient>,
   jobId: bigint,
   signalValue: string,   // e.g. "FR_BTC_8h=0.032%"
 ): Promise<Hex> {
   const { keccak256, toBytes } = await import('viem');
   const deliverable = keccak256(toBytes(signalValue));
-  const addr = walletClient.account!.address;
-  return walletClient.writeContract({
+  const hash = await walletClient.writeContract({
     address: ERC8183_ADDRESS,
     abi: ERC8183_ABI,
     functionName: 'submit',
     args: [jobId, deliverable, '0x'],
-    account: addr,
     chain: walletClient.chain!,
   });
+  await waitForSuccess(hash, 'submitSignal');
+  return hash;
 }
 
 // ── getJob JSON ABI (tuple不可のため分離) ────────────────────
@@ -281,3 +379,97 @@ export const GET_JOB_ABI = [{
     ],
   }],
 }] as const;
+
+// ── Challenger-side helpers (permissionless challenge) ─────────────
+// BondHook.challenge() never reverts on a "wrong guess" — it either
+// slashes (expired squatter / post-expiry submit) or forfeits the
+// challenger's stake to treasury via ChallengeRejected. Safe to call
+// speculatively; losses are bounded to budget/10 per miss.
+
+/** Read whether a job currently has any bond locked (precondition for challenge to not revert on NotChallengeable). */
+export async function getJobBondLocked(jobId: bigint): Promise<bigint> {
+  const pub = getPublicClient();
+  return pub.readContract({
+    address: BOND_HOOK_ADDRESS,
+    abi: BOND_HOOK_ABI,
+    functionName: 'jobBondLocked',
+    args: [jobId],
+  }) as Promise<bigint>;
+}
+
+/** Read the budget recorded for a job (challenge basis: stake = budget/10). */
+export async function getJobBudget(jobId: bigint): Promise<bigint> {
+  const pub = getPublicClient();
+  return pub.readContract({
+    address: BOND_HOOK_ADDRESS,
+    abi: BOND_HOOK_ABI,
+    functionName: 'jobBudget',
+    args: [jobId],
+  }) as Promise<bigint>;
+}
+
+/**
+ * Challenger: approve USDC stake then call challenge(jobId). Two sequential
+ * txs, each awaited. stake = jobBudget(jobId) / 10n — caller must approve
+ * exactly that amount (or read getJobBudget() first and compute it).
+ */
+export async function challengeJob(
+  walletClient: ReturnType<typeof makeWalletClient>,
+  jobId: bigint,
+  stake: bigint,
+): Promise<Hex> {
+  const approveHash = await walletClient.writeContract({
+    address: USDC_ADDRESS,
+    abi: USDC_ABI,
+    functionName: 'approve',
+    args: [BOND_HOOK_ADDRESS, stake],
+    chain: walletClient.chain!,
+  });
+  await waitForSuccess(approveHash, 'challengeJob:approve');
+
+  const challengeHash = await walletClient.writeContract({
+    address: BOND_HOOK_ADDRESS,
+    abi: BOND_HOOK_ABI,
+    functionName: 'challenge',
+    args: [jobId],
+    chain: walletClient.chain!,
+  });
+  await waitForSuccess(challengeHash, 'challengeJob:challenge');
+  return challengeHash;
+}
+
+/**
+ * Find jobs currently challengeable via BondHook.challenge().
+ * Mirrors the on-chain predicate exactly (BondHook.sol:338-355) so this
+ * never reports a false positive that would revert/forfeit on-chain:
+ *   - jobBondLocked(jobId) > 0  (NotChallengeable guard)
+ *   - expiredSquatter: status in {Funded, Submitted} AND now > expiredAt
+ *   - postExpirySubmit: submittedAt > expiredAt (both nonzero)
+ * Scans jobCounter linearly — fine at current scale, swap to event
+ * indexing (JobFunded/JobSubmitted) if job volume grows materially.
+ */
+export async function getChallengeableJobs(): Promise<Job[]> {
+  const counter = await getJobCounter();
+  const candidates: Job[] = [];
+
+  // Pass 1: cheap filter — only jobs with locked bond can possibly qualify.
+  for (let i = 1n; i <= counter; i++) {
+    const locked = await getJobBondLocked(i);
+    if (locked === 0n) continue;
+    const job = await getJob(i);
+    candidates.push(job);
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  return candidates.filter((job) => {
+    const expiredSquatter =
+      job.expiredAt !== 0 &&
+      nowSec > job.expiredAt &&
+      (job.status === JobStatus.Funded || job.status === JobStatus.Submitted);
+    const postExpirySubmit =
+      job.submittedAt !== 0 &&
+      job.expiredAt   !== 0 &&
+      job.submittedAt > job.expiredAt;
+    return expiredSquatter || postExpirySubmit;
+  });
+}
