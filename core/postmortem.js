@@ -1,30 +1,11 @@
-'use strict';
 // ── core/postmortem.js ────────────────────────────────────────────
 // Post-Mortem分析 + slash判定の土台
-//
-// PerceptradeからのDiff:
-//   - CROWD_EVENTS_FILE / SNAPSHOTS_FILE の直読みを排除
-//   - opts.getCurrentSignalZ  : async () => number|null  (現在のfrZ等)
-//   - opts.getRecentEvents    : async () => string[]     (コンテキストイベント)
-//   - opts.postMortemFile     : string (保存先、デフォルト=POSTMORTEM_FILE env)
-//
-// slash判定:
-//   runPostMortem の戻り値に slashVerdict を追加
-//   { slash: boolean, reason: string, slashPct: number }
-//   slashPct: 0〜1 (bond slashの割合、tier/乖離率に応じて設定)
-//
-// Althemis Provider slash条件:
-//   result='loss' AND reversion.frZ_reverted=false → シグナルが外れた
-//   → slashPct = SLASH_PCT env (default 0.1 = 10% of bond)
 
-const fs      = require('fs');
-const { callLLM } = require('./debate');
+import fs from 'fs';
+import { callLLM } from './debate.js';
 
 const DEFAULT_POSTMORTEM_FILE = process.env.POSTMORTEM_FILE || '/home/agent/althemis/post_mortems.json';
 
-// ── frZ/シグナルZ Reversion計算 ───────────────────────────────────
-// entry/closeはシグナルのZ値(frZなど)
-// 戻り値: { frZ_revert_ratio, frZ_reverted, frZ_sign_flipped } | null
 function computeReversion(entry, close) {
   if (entry === null || entry === undefined || close === null || close === undefined) return null;
   if (Math.abs(entry) < 0.01) return null;
@@ -36,13 +17,9 @@ function computeReversion(entry, close) {
   };
 }
 
-// ── slash判定ロジック ─────────────────────────────────────────────
-// pm: runPostMortemの結果オブジェクト
-// 戻り値: { slash: boolean, reason: string, slashPct: number }
 function computeSlashVerdict(pm) {
   const slashPct = parseFloat(process.env.SLASH_PCT || '0.1');
 
-  // シグナルが外れた AND 逆方向に動いた → slash
   if (pm.result === 'loss' && pm.reversion && !pm.reversion.frZ_reverted) {
     return {
       slash:    true,
@@ -51,7 +28,6 @@ function computeSlashVerdict(pm) {
     };
   }
 
-  // lossだが逆方向まではいかなかった → slash半額
   if (pm.result === 'loss') {
     return {
       slash:    true,
@@ -63,26 +39,6 @@ function computeSlashVerdict(pm) {
   return { slash: false, reason: 'win — no slash', slashPct: 0 };
 }
 
-// ── Post-Mortem実行 ───────────────────────────────────────────────
-//
-// closedPosition: {
-//   openPriceAvg, holdSide|side,
-//   frZ_at_entry, frZ_min_during_hold, frZ_max_during_hold,
-//   marginSize
-// }
-// exitPrice: number
-// closeReason: string
-//
-// opts: {
-//   getCurrentSignalZ : async () => number|null   (現在のfrZ取得関数)
-//   getRecentEvents   : async () => string[]      (最近のイベントリスト)
-//   postMortemFile    : string                    (保存先ファイルパス)
-//   leverage          : number                    (default: LEVERAGE env)
-//   entryFeePct       : number                    (default: ENTRY_FEE_PCT env)
-//   exitFeePct        : number                    (default: EXIT_FEE_PCT env)
-// }
-//
-// 戻り値: post-mortemオブジェクト (ファイルにも保存)
 async function runPostMortem(closedPosition, exitPrice, closeReason, opts = {}) {
   try {
     if (!closedPosition) return null;
@@ -95,7 +51,6 @@ async function runPostMortem(closedPosition, exitPrice, closeReason, opts = {}) 
     const entryFee   = opts.entryFeePct ?? parseFloat(process.env.ENTRY_FEE_PCT  || '0.0006');
     const exitFee    = opts.exitFeePct  ?? parseFloat(process.env.EXIT_FEE_PCT   || '0.0006');
 
-    // PnL計算
     let pnl = { raw: null, leveraged: null, fee_pct: null, net: null, usdt: null };
     if (entryPrice > 0) {
       const dir        = side === 'long' ? 1 : -1;
@@ -114,7 +69,6 @@ async function runPostMortem(closedPosition, exitPrice, closeReason, opts = {}) 
     }
     const pnlPct = pnl.net;
 
-    // コンテキスト取得(注入関数 or 空配列/null)
     let recentEvents = [];
     try {
       if (typeof opts.getRecentEvents === 'function') {
@@ -133,13 +87,11 @@ async function runPostMortem(closedPosition, exitPrice, closeReason, opts = {}) 
       console.warn(`[postmortem] getCurrentSignalZ failed: ${e.message}`);
     }
 
-    // frZ reversion
     const reversion = computeReversion(
       closedPosition.frZ_at_entry ?? null,
       currentSignalZ
     );
 
-    // LLM分析
     const prompt = `You are a trading post-mortem analyst. Write a brief analysis of this closed trade.
 
 Trade summary:
@@ -165,7 +117,6 @@ Respond ONLY with JSON: {"result":"win"|"loss"|"unknown","pnl_pct":${pnlPct ?? n
       analysis: 'LLM unavailable — result inferred from PnL'
     });
 
-    // slash判定
     const pmBase = {
       ...parsed,
       timestamp:             new Date().toISOString(),
@@ -183,7 +134,6 @@ Respond ONLY with JSON: {"result":"win"|"loss"|"unknown","pnl_pct":${pnlPct ?? n
     const slashVerdict = computeSlashVerdict(pmBase);
     const pm = { ...pmBase, slashVerdict };
 
-    // ファイル保存
     let mortems = [];
     try {
       if (fs.existsSync(postMortemFile)) {
@@ -202,7 +152,6 @@ Respond ONLY with JSON: {"result":"win"|"loss"|"unknown","pnl_pct":${pnlPct ?? n
   }
 }
 
-// ── Post-Mortem履歴ロード ─────────────────────────────────────────
 function loadPostMortems(postMortemFile) {
   const path = postMortemFile || DEFAULT_POSTMORTEM_FILE;
   try {
@@ -213,4 +162,4 @@ function loadPostMortems(postMortemFile) {
   return [];
 }
 
-module.exports = { computeReversion, computeSlashVerdict, runPostMortem, loadPostMortems };
+export { computeReversion, computeSlashVerdict, runPostMortem, loadPostMortems };

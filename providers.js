@@ -1,4 +1,3 @@
-'use strict';
 // ── providers.js ──────────────────────────────────────────────────
 // 3つのシグナルProvider (論理エージェント)。データ取得はcex.jsに委譲。
 //
@@ -7,10 +6,10 @@
 //   getRegimeSignal() → { signal: {phase,riskLevel,...}, providerId, ... }
 //   fetchAllSignals() → Consumer向け一括取得
 
-require('dotenv').config();
-const fs = require('fs');
-const { fetchAllSources } = require('./cex');
-const { loadRegimeState } = require('./regime_classifier');
+import 'dotenv/config';
+import fs from 'fs';
+import { fetchAllSources } from './cex.js';
+import { loadRegimeState } from './regime_classifier.js';
 
 // ── Provider ID / Bond Address (シミュレーション用) ───────────────
 const PROVIDERS = {
@@ -94,7 +93,6 @@ function calcDirectionSignal(sources, prevSources = [], frHistory = []) {
 }
 
 // ── 共有データ取得 (1サイクル1回のfetchで全Provider共用) ──────────
-// sourcesCache: 同一サイクル内の重複fetch防止
 let _cycleCache = null;
 let _cycleCacheTs = 0;
 const CACHE_TTL_MS = 30 * 1000;
@@ -118,11 +116,9 @@ async function getFRSignal() {
 
     const signal = calcDirectionSignal(sources, prevSources, frHistory);
 
-    // Bitget L/S ratio があれば付与 (Architectのconfidence調整材料)
     const bitgetSrc = sources.find(s => s.exchange === 'bitget');
     if (bitgetSrc?.longShortRatio) signal.longShortRatio = bitgetSrc.longShortRatio;
 
-    // 履歴更新 (FR Providerだけが書き込み責務を持つ)
     const avgFR = sources.reduce((s, d) => s + d.fr, 0) / sources.length;
     frHistory.unshift(avgFR);
     saveJSON(FR_HISTORY_FILE, frHistory.slice(0, FR_HISTORY_MAX));
@@ -200,7 +196,7 @@ async function getRegimeSignal() {
 
 // ── Consumer向け一括取得 ──────────────────────────────────────────
 async function fetchAllSignals() {
-  const fr     = await getFRSignal();     // 履歴書き込みを含むので先に実行
+  const fr     = await getFRSignal();
   const [oi, regime] = await Promise.all([getOISignal(), getRegimeSignal()]);
   return {
     fr:     fr.signal,
@@ -210,4 +206,4 @@ async function fetchAllSignals() {
   };
 }
 
-module.exports = { getFRSignal, getOISignal, getRegimeSignal, fetchAllSignals };
+export { getFRSignal, getOISignal, getRegimeSignal, fetchAllSignals };

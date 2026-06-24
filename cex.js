@@ -1,11 +1,10 @@
-'use strict';
 // ── cex.js ────────────────────────────────────────────────────────
 // 全CEXのpublic市場データ取得層。認証不要のエンドポイントのみ使用。
 // 6 CEX: Bybit / Hyperliquid / OKX / Binance / KuCoin / Bitget
 //
 // 各getterの戻り値: { exchange, fr, oi, longShortRatio? } | null
 
-const axios = require('axios');
+import axios from 'axios';
 const TIMEOUT = 5000;
 
 async function getBybitFR(symbol = 'BTCUSDT') {
@@ -111,7 +110,7 @@ async function fetchAllSources() {
   return sources;
 }
 
-module.exports = {
+export {
   getBybitFR, getHyperliquidFR, getOkxFR, getBinanceFR, getKucoinFR, getBitgetFR,
   getBTCPrice, fetchAllSources
 };

@@ -1,5 +1,5 @@
-require('dotenv').config();
-const fs = require('fs');
+import 'dotenv/config';
+import fs from 'fs';
 
 const SNAPSHOTS_FILE = process.env.SNAPSHOTS_FILE || '/home/agent/perceptrade/snapshots.json';
 const REGIME_FILE    = process.env.REGIME_FILE    || '/home/agent/perceptrade/regime_state.json';
@@ -199,4 +199,4 @@ async function classifyRegime() {
   console.log(`[regime] saved — current: ${state.current_regime} (${state.current_confidence})`);
 }
 
-module.exports = { classifyRegime, applyRegimeGate, loadRegimeState };
+export { classifyRegime, applyRegimeGate, loadRegimeState };

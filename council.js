@@ -1,10 +1,9 @@
-'use strict';
 // ── council.js (Althemis Consumer) ───────────────────────────────
 // Provider×3からシグナルを受け取り、Council討論で統合判断を出力する。
 // 取引執行は行わない。判断結果をArbiter×3へ渡すのは呼び出し側の責務。
 //
 // Entry point:
-//   const { runConsumerCycle } = require('./council');
+//   import { runConsumerCycle } from './council.js';
 //   const verdict = await runConsumerCycle(signals);
 //
 // signals: {
@@ -13,12 +12,12 @@
 //   regime: { phase: string, riskLevel: 'risk_on'|'neutral'|'risk_off' }
 // }
 
-require('dotenv').config();
-const fs = require('fs');
-const { applyRegimeGate, loadRegimeState } = require('./regime_classifier');
-const { runDebate, callLLM }               = require('./core/debate');
-const { calibrateConfidence, computeTier } = require('./core/calibration');
-const { loadPostMortems }                  = require('./core/postmortem');
+import 'dotenv/config';
+import fs from 'fs';
+import { applyRegimeGate, loadRegimeState } from './regime_classifier.js';
+import { runDebate, callLLM } from './core/debate.js';
+import { calibrateConfidence, computeTier } from './core/calibration.js';
+import { loadPostMortems } from './core/postmortem.js';
 
 // ── Constants ─────────────────────────────────────────────────────
 const MAX_DEBATE_ROUNDS = parseInt(process.env.MAX_DEBATE_ROUNDS || '2');
@@ -26,7 +25,6 @@ const SNAPSHOTS_FILE    = process.env.SNAPSHOTS_FILE    || '/home/agent/althemis
 const POSTMORTEM_FILE   = process.env.POSTMORTEM_FILE   || '/home/agent/althemis/post_mortems.json';
 
 // ── サーキットブレーカー ──────────────────────────────────────────
-// 直近N件の連続lossでアクションを抑制
 const CONSEC_LOSS_THRESHOLD = parseInt(process.env.CONSEC_LOSS_THRESHOLD || '3');
 
 function checkCircuitBreaker(postMortems) {
@@ -40,12 +38,10 @@ function checkCircuitBreaker(postMortems) {
   return allLoss;
 }
 
-// ── Post-Mortem履歴ロード ─────────────────────────────────────────
 function loadRecentPostMortems(n = 3) {
   return loadPostMortems(POSTMORTEM_FILE).slice(0, n);
 }
 
-// ── スナップショット保存 ──────────────────────────────────────────
 function saveSnapshot(signals, verdict, debate) {
   try {
     let snaps = [];
@@ -66,9 +62,6 @@ function saveSnapshot(signals, verdict, debate) {
     console.error('[snapshot] save failed:', e.message);
   }
 }
-
-// ── Prompt Builders ───────────────────────────────────────────────
-// context shape: { signals, postMortems, regimeState }
 
 function buildArchitectPrompt(ctx, prevProposal, prevAudit, round) {
   const { signals, postMortems } = ctx;
@@ -115,7 +108,7 @@ function buildAuditorPrompt(proposal, ctx, round, prevFeedback) {
   const { signals } = ctx;
   const { fr, oi, regime } = signals;
 
-  const base = `You are the Auditor (Red Team) evaluating a signal integration proposal.
+  const base = `You are the Auditor (Red Team) evaluating a signal integration proposal in an AI signal marketplace.
 
 Proposal under review: ${JSON.stringify(proposal)}
 
@@ -124,15 +117,20 @@ Signal context:
 - OI Provider: momentum=${oi.momentum} trend=${oi.trend}
 - Regime: phase=${regime.phase} riskLevel=${regime.riskLevel}
 
-Your job: find reasons this consensus could be WRONG.
-List exactly 3 scenarios where following this signal loses money. Reference at least one observable indicator per scenario.
-If risk is acceptable: approved=true. If not: approved=false.
+Your job is a balanced risk assessment, not a search for reasons to reject.
+
+Calibration guidance:
+- |frZ| > 2 combined with a regime that does not directly contradict the proposal is normally strong enough evidence to approve, even though some downside scenario always exists.
+- Reserve approved=false for cases where risk is severe AND specifically evidenced by the signal context above (e.g. regime directly opposes the proposed direction, or the underlying frZ/strength is weak or ambiguous).
+- "confidence" = your confidence that THIS PROPOSAL IS SOUND ENOUGH TO APPROVE (0 = should be rejected, 1 = clearly approvable). It is not a measure of how severe your listed scenarios sound.
+
+List exactly 3 scenarios relevant to this proposal (a mix of supporting and risk factors, not only bearish ones). Reference at least one observable indicator per scenario. Then give your verdict based on the calibration guidance above.
 
 Respond ONLY in JSON:
 {
   "approved": true|false,
   "confidence": 0-1,
-  "feedback": "worst-case scenario in one sentence",
+  "feedback": "key rationale or risk in one sentence",
   "scenarios": ["Scenario 1: ...", "Scenario 2: ...", "Scenario 3: ..."]
 }`;
 
@@ -143,30 +141,14 @@ Respond ONLY in JSON:
 This is audit round ${round}/${MAX_DEBATE_ROUNDS}.
 Your previous objection was: "${prevFeedback}"
 The Architect has revised their proposal (new confidence: ${proposal.confidence}).
-Re-evaluate with fresh eyes. If risk is adequately addressed: approved=true.`;
+Re-evaluate with fresh eyes using the same calibration guidance above.`;
 }
 
-// ── Consumer メインサイクル ───────────────────────────────────────
-//
-// 戻り値:
-// {
-//   action:            'long'|'short'|'hold'
-//   confidence:        number (raw)
-//   calibrated:        number (history-adjusted)
-//   disagreementIndex: number 0-1
-//   converged:         bool
-//   rounds:            number
-//   circuitBreaker:    bool
-//   debate:            { proposals, audits, ... }
-//   signals:           (入力をそのままecho)
-//   timestamp:         ISO string
-// }
 async function runConsumerCycle(signals) {
   const timestamp    = new Date().toISOString();
   const postMortems  = loadRecentPostMortems(10);
   const regimeState  = loadRegimeState?.() ?? null;
 
-  // サーキットブレーカー
   const circuitBreaker = checkCircuitBreaker(postMortems);
   if (circuitBreaker) {
     const verdict = {
@@ -179,7 +161,6 @@ async function runConsumerCycle(signals) {
     return verdict;
   }
 
-  // regime gate (risk_off → holdを強制)
   const { fr } = signals;
   const directionSignal = {
     direction: fr.direction,
@@ -187,7 +168,6 @@ async function runConsumerCycle(signals) {
     frZ:       fr.frZ
   };
 
-  // Council討論
   const ctx = { signals, postMortems, regimeState };
   const debate = await runDebate(
     { ...ctx, directionSignal },
@@ -197,7 +177,6 @@ async function runConsumerCycle(signals) {
 
   const { proposal, disagreementIndex, converged, rounds } = debate;
 
-  // Confidence較正 (frZ bucket × 履歴winRate)
   const history = postMortems.map(m => ({
     result:         m.result,
     signalStrength: m.frZ_at_entry ?? 0
@@ -228,4 +207,4 @@ async function runConsumerCycle(signals) {
   return verdict;
 }
 
-module.exports = { runConsumerCycle };
+export { runConsumerCycle };
