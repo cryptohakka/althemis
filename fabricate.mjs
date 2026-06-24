@@ -11,10 +11,8 @@
 // THIS BURNS 80% OF THE LOCKED BOND (testnet USDC). Run with main stopped.
 
 import 'dotenv/config';
-import { createWalletClient, http, parseUnits, keccak256, toBytes,
-         decodeEventLog } from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
-import { getPublicClient, arcChain } from './protocol/arc.js';
+import { parseUnits, keccak256, toBytes, decodeEventLog } from 'viem';
+import { getPublicClient, loadRoster } from './protocol/arc.js';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { parseAbi } = require('viem');
@@ -33,15 +31,14 @@ const USDC_ABI = parseAbi([
   'function decimals() view returns (uint8)',
 ]);
 
-const pub          = getPublicClient();
-const chain        = arcChain;
-const consumerAcct = privateKeyToAccount(process.env.CONSUMER_PRIVATE_KEY);
-const providerAcct = privateKeyToAccount(process.env.PROVIDER_PRIVATE_KEY);
-const consumer     = createWalletClient({ account: consumerAcct, chain, transport: http(process.env.ARC_RPC_URL) });
-const provider     = createWalletClient({ account: providerAcct, chain, transport: http(process.env.ARC_RPC_URL) });
+const pub      = getPublicClient();
+const roster   = loadRoster();
+const consumer = roster.CBUYER.client;
+const provider = roster[ROLE].client;
+const providerAcct = { address: roster[ROLE].address };
 
 async function writeTx(client, req) {
-  const hash = await client.writeContract({ ...req, account: client.account, chain });
+  const hash = await client.writeContract({ ...req, account: client.account, chain: client.chain });
   const rc   = await pub.waitForTransactionReceipt({ hash });
   if (rc.status !== 'success') throw new Error(`tx reverted: ${hash}`);
   return rc;

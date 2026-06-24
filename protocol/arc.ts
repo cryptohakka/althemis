@@ -36,7 +36,7 @@ export const arcChain = getArcChain();
 export function getPublicClient(): PublicClient {
   return createPublicClient({
     chain: arcChain,
-    transport: http(process.env.ARC_RPC_URL!, { timeout: 30000, retryCount: 8, retryDelay: 2000 }),
+    transport: http(process.env.ARC_RPC_URL!, { timeout: 8000, retryCount: 2, retryDelay: 1000 }),
   });
 }
 
@@ -48,7 +48,7 @@ export function makeWalletClient(pk: `0x${string}`) {
   return createWalletClient({
     account,
     chain: arcChain,
-    transport: http(process.env.ARC_RPC_URL!, { timeout: 30000, retryCount: 8, retryDelay: 2000 }),
+    transport: http(process.env.ARC_RPC_URL!, { timeout: 8000, retryCount: 2, retryDelay: 1000 }),
   });
 }
 

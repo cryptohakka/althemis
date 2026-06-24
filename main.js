@@ -45,18 +45,28 @@ function persistJobState() { saveJobState(jobState); }
 const jobState = loadJobState();
 
 async function syncFromChain(stateMap) {
-  for (const [role, record] of stateMap) {
-    const job = await getJob(BigInt(record.jobId));
-    const statusName = JobStatus[job.status];
-    if (job.status === JobStatus.Completed ||
-        job.status === JobStatus.Rejected  ||
-        job.status === JobStatus.Expired) {
-      console.log(`[job-state] ${role} job #${record.jobId} settled (${statusName}) — clearing`);
-      stateMap.delete(role);
-    } else if (record.status !== statusName) {
-      console.log(`[job-state] ${role} job #${record.jobId} status ${record.status ?? '?'} -> ${statusName}`);
-      record.status = statusName;
+  // v2: each role holds an ARRAY of concurrent jobs. Re-check every job
+  // individually on-chain; remove only the ones that hit a terminal status.
+  // Active jobs for OTHER jobIds in the same role's array are untouched.
+  for (const [role, jobs] of stateMap) {
+    const kept = [];
+    for (const record of jobs) {
+      const job = await getJob(BigInt(record.jobId));
+      const statusName = JobStatus[job.status];
+      if (job.status === JobStatus.Completed ||
+          job.status === JobStatus.Rejected  ||
+          job.status === JobStatus.Expired) {
+        console.log(`[job-state] ${role} job #${record.jobId} settled (${statusName}) — removing`);
+        continue;
+      }
+      if (record.status !== statusName) {
+        console.log(`[job-state] ${role} job #${record.jobId} status ${record.status ?? '?'} -> ${statusName}`);
+        record.status = statusName;
+      }
+      kept.push(record);
     }
+    if (kept.length === 0) stateMap.delete(role);
+    else stateMap.set(role, kept);
   }
   persistJobState();
 }
@@ -72,12 +82,11 @@ const FABRICATED_DESCRIPTION = 'FR_BTC_8h=0.005;z=99;dir=long';
 // check -> createJob(by CBUYER) -> setBudget(by provider) ->
 // fundJob(by CBUYER) -> submitSignal(by provider).
 async function tickProvider(role, frSig, dec) {
-  if (jobState.has(role)) {
-    const record = jobState.get(role);
-    console.log(`[provider-job] ${role} job #${record.jobId} still active (${record.status}) — skip`);
-    return;
-  }
-
+  // v2: skip-if-active gate REMOVED. A new job is submitted every cycle
+  // regardless of how many of this role's prior jobs are still pending —
+  // Phase A verification doesn't wait for the 8h Phase B / completeJob().
+  // No concurrency cap: PCHEAP's sub-cent budget keeps bond/escrow exposure
+  // negligible even with many jobs in flight simultaneously.
   const policy    = getPolicy(role);
   const agent     = roster[role];
   const fabricate = Math.random() < policy.fabricationProb;
@@ -117,13 +126,15 @@ async function tickProvider(role, frSig, dec) {
   await fundJob(cbuyer.client, jobId, budget);
   await submitSignal(agent.client, jobId, description);
 
-  jobState.set(role, {
+  const jobs = jobState.get(role) || [];
+  jobs.push({
     jobId: jobId.toString(), description,
     submittedAt: new Date().toISOString(), status: 'Submitted',
     fabricated: fabricate,
   });
+  jobState.set(role, jobs);
   persistJobState();
-  console.log(`[provider-job] ${role} job #${jobId} submitted: ${description}`);
+  console.log(`[provider-job] ${role} job #${jobId} submitted (${jobs.length} active for ${role}): ${description}`);
 }
 
 // ── Generic challenger tick ─────────────────────────────────────────────
@@ -152,7 +163,13 @@ async function tickChallenger() {
 }
 
 // ── Main cycle ───────────────────────────────────────────────────────────
+let cycleInFlight = false;
 async function runCycle() {
+  if (cycleInFlight) {
+    console.log('[main] previous cycle still running -- skip this tick');
+    return;
+  }
+  cycleInFlight = true;
   console.log(`\n[main] cycle start ${new Date().toISOString()}`);
   try {
     const signals = await fetchAllSignals();
@@ -182,6 +199,8 @@ async function runCycle() {
     }
   } catch (e) {
     console.error('[main] cycle error:', e.message);
+  } finally {
+    cycleInFlight = false;
   }
 }
 
