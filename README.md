@@ -96,8 +96,8 @@ The tier was redesigned in v1.1 after we measured that the original win-rate win
 | Reliability | Verified count | Bond rate |
 |---|---|---|
 | Bronze | 0–9 | 20000 bps (200%) |
-| Silver | 10–49 | 16000 bps (160%) |
-| Gold | 50+ | 12500 bps (125%) |
+| Silver | 10–49 | 16500 bps (165%) |
+| Gold | 50+ | 13750 bps (137.5%) |
 
 **Skill axis — probabilistic, grants a discount only.** Driven by the **cumulative Wilson 95% lower bound** of directional win rate, not the point estimate. Demotion uses a 5% hysteresis band.
 
@@ -108,15 +108,15 @@ The tier was redesigned in v1.1 after we measured that the original win-rate win
 | Edge-S | lcb ≥ 0.50 | −10% |
 | Edge-G | lcb ≥ 0.60 | −20% |
 
-**Effective bond rate** = `reliabilityBps × skillDiscount / 10000`, with a hard floor of **10000 bps (100%)** enforced in `BondHook.sol`. The floor is the Gold × Edge-G corner (`12500 × 0.80 = 10000`): even the best-rated Provider still bonds 100% of exposure, so a slash always covers the consumer budget. Tier changes apply to **new job locks only** — an existing lock keeps the rate it was funded at.
+**Effective bond rate** = `reliabilityBps × skillDiscount / 10000`, with a hard floor of **11000 bps (110%)** enforced in `BondHook.sol`. The floor is the Gold × Edge-G corner (`13750 × 0.80 = 11000`): even the best-rated Provider still bonds 110% of exposure (100% to cover the consumer budget + 10% for a challenger reward), so a slash always covers the consumer budget. Tier changes apply to **new job locks only** — an existing lock keeps the rate it was funded at.
 
 Why the split: a fabrication is a deterministic fact, so it drives the slashable Reliability axis. Predictive skill is a statistical estimate, so it only ever grants a discount, and only when the *lower bound* — not a lucky point estimate — clears the bar. Punishment stays deterministic; reputation stays probabilistic.
 
 ### Slash distribution
 
-When an attestation is proven fabricated, the slashed bond is split **80% to the harmed Consumer(s), 20% to the protocol treasury** (as implemented in `BondHook.sol`).
+When an attestation is proven fabricated, the slashed bond is distributed three ways in `BondHook.sol`: **100% of the job price to the harmed Consumer** (always), **10% of the price to the challenger** (on a permissionless deterministic challenge only; zero on an oracle-initiated Phase A slash), and **the remainder to the protocol treasury**. The 110% bond floor guarantees that `consumer (100%) + challenger (10%)` always fit inside the locked amount.
 
-A 20% **dispute-filer reward** (target split: 60/20/20) is deliberately deferred to v2: in v1 the Adjudicator is operator-run and disputes are not permissionless, so a filer reward would have no functioning recipient role. It ships together with permissionless dispute filing — see Known Limitations & Roadmap.
+The challenger reward exists because Althemis already supports **permissionless deterministic challenges** for two cases an honest oracle alone would miss: expired squatters and post-expiry submissions (`stake = budget / 10`, forfeited to treasury on a wrong challenge). A broader 60/20/20 filer reward for *interpretive* disputes is deferred to v2, where it ships with the decentralized Adjudicator — see Known Limitations & Roadmap.
 
 ## Status
 
@@ -127,8 +127,21 @@ A 20% **dispute-filer reward** (target split: 60/20/20) is deliberately deferred
 - ✅ The honest path and the `unverifiable` quorum-failure path (settles COMPLETE, no slash, no tier impact) are both exercised end-to-end and covered by the Foundry suite below.
 
   This is the core demonstration: under one deterministic threshold, an honest value survives and a fabricated value is slashed 100% of bond -- and the oracle does it on its own. *A Provider can be wrong and survive; a Provider cannot lie and survive.*
-- ✅ `BondHook.sol` Foundry test suite: 26 tests passing — bond lock/unlock/withdraw, `beforeFund` coverage + new-provider caps, two-axis bond rate (Reliability sets bps, Skill discounts, 100% floor), slash 80/20 split with event/balance assertions, and the non-slash reject path (unverifiable settlement). Run with `forge test --match-path "contracts/test/BondHook.t.sol"`.
+- ✅ `BondHook.sol` Foundry test suite: 31 tests passing — bond lock/unlock/withdraw, `beforeFund` coverage + new-provider caps, two-axis bond rate (Reliability sets bps, Skill discounts, 110% floor), 3-way slash distribution (consumer 100% / challenger 10% / treasury remainder) with event/balance assertions, and the non-slash reject path (unverifiable settlement). Run with `forge test --match-path "contracts/test/BondHook.t.sol"`.
 - 🔜 Public Provider onboarding, dashboard at `althemis.a2aflow.space`.
+
+## What's real vs what's staged
+
+Althemis is a hackathon submission, and we hold ourselves to the same falsification discipline the protocol enforces on its Providers. Rather than dress up a single-operator demo as organic traction, we state plainly what is real, what is operator-driven, and what does not exist yet.
+
+**Layer 1 — The protocol (real, immutable, independently verifiable).**
+`BondHook.sol`, the two-axis tier engine, the 3-way slash distribution, the 110% floor, and the autonomous Phase A oracle are all on-chain on Arc Testnet. Anyone can `cast call` the contract, replay the 6-CEX quorum, or re-run `forge test` (31/31) against this repo. None of this can be faked or quietly edited — the slash logic that burns a fabricator's bond is the same code path whether the fabricator is the operator or a stranger.
+
+**Layer 2 — The operator demonstration (real transactions, single operator playing a roster).**
+The live agents that populate the market are run by the operator, but as a **roster of independent wallets with distinct, hard-coded honesty policies** — not a single self-dealing pair. The honest provider (`PCHEAP`) always reports the true 6-CEX signal; a deliberately dishonest provider (`PLIAR`) fabricates a fraction of the time. The full Reliability axis has been exercised end-to-end on-chain: a provider climbs **Bronze → Silver → Gold** purely by accumulating verified attestations, and a fabricated attestation is caught by the oracle and slashed autonomously, resetting that provider to Bronze. Crucially, this demonstration is **operator-adverse**: when `PLIAR` lies and gets slashed, it is the operator's own bond that burns. We are not staging wins — we are staging an honest distribution of outcomes, losses included, because that is the only thing the protocol actually claims to guarantee.
+
+**Layer 3 — External participants (none yet — stated honestly).**
+There are no independent third-party Providers or Consumers on the marketplace today. We do not simulate them, and the dashboard is built to make their absence un-hideable: job counts can be inflated by an operator, but the **unique-buyer count cannot be**, so both numbers are shown side by side. The marketplace contract is permissionless and ready for external onboarding; that adoption simply hasn't happened in a testnet hackathon window, and we would rather say so than fabricate a leaderboard — which would be, fittingly, the exact behavior Althemis slashes.
 
 ## Known Limitations & Roadmap
 
@@ -141,14 +154,14 @@ A 20% **dispute-filer reward** (target split: 60/20/20) is deliberately deferred
 
 ### v1 scope cuts
 
-- **On-chain scope is deliberately thin.** This repository's only contract is `BondHook.sol` — bond custody, the two-axis bond rate (Reliability sets the bps, Skill discounts, 100% floor), the new-provider exposure cap, and slash execution. The job lifecycle (create / fund / submit / settle) lives in an external **ERC-8183** job marketplace core deployed on Arc Testnet; Althemis hangs off it as a hook rather than re-implementing a registry. Dependency details (core contract address, ABI notes) are in `protocol/escrow.ts`.
-- **Dispute-filer reward (60/20/20 split) is deferred.** The implemented split is 80/20 (Consumer/treasury). The filer reward only makes sense once dispute filing is permissionless, which requires the v2 Adjudicator work below — shipping the reward before the role exists would be dead code in the critical slash path.
+- **On-chain scope is deliberately thin.** This repository's only contract is `BondHook.sol` — bond custody, the two-axis bond rate (Reliability sets the bps, Skill discounts, 110% floor), the new-provider exposure cap, and slash execution. The job lifecycle (create / fund / submit / settle) lives in an external **ERC-8183** job marketplace core deployed on Arc Testnet; Althemis hangs off it as a hook rather than re-implementing a registry. Dependency details (core contract address, ABI notes) are in `protocol/escrow.ts`.
+- **Interpretive-dispute filer reward (broad 60/20/20 split) is deferred.** The implemented slash is already 3-way — consumer 100% / challenger 10% / treasury remainder — and the challenger reward is live for *deterministic* permissionless challenges (expired squatters, post-expiry submits). What v2 adds is a filer reward for *interpretive* disputes, which only makes sense once dispute filing for non-deterministic claims is permissionless — that requires the v2 Adjudicator work below.
 - **OI attestation verification is deferred.** Open interest lacks a clean cross-exchange consensus value (OI is venue-local, not fungible across exchanges the way funding rates are comparable). Rather than auto-passing OI attestations — which would dilute the meaning of "verified" — OI jobs are held out of Phase A until a sound verification source is defined.
 - **Adjudicator is operator-run.** v1 uses a single operator-controlled Adjudicator, invoked only on attestation-fraud disputes. v2 roadmap: decentralize adjudication (committee or restaked-operator model), open dispute filing permissionlessly (50%-of-bond filer stake, 20% filer reward), and extend dispute scope beyond attestation fraud only where a deterministic verification rule exists for the new claim type.
 
 ### Roadmap
 
-1. ✅ Foundry test suite for `BondHook.sol` (bond lock/unlock, slash + split, two-axis bond rate + 100% floor, new-provider cap) — **done, 26 tests passing**
+1. ✅ Foundry test suite for `BondHook.sol` (bond lock/unlock, slash + split, two-axis bond rate + 110% floor, new-provider cap) — **done, 31 tests passing**
 2. Public Provider onboarding + dashboard (`althemis.a2aflow.space`)
 3. OI attestation verification source
 4. Adjudicator decentralization + permissionless dispute filing with filer reward (v2)

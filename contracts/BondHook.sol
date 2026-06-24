@@ -45,8 +45,8 @@ interface IERC8183Core {
 //
 // Reliability tier (deterministic, Phase A verified count):
 //   Bronze  ( 0– 9 verified) → 20000 bps (200%)
-//   Silver  (10–49 verified) → 16000 bps (160%)
-//   Gold    (50+   verified) → 12500 bps (125%)
+//   Silver  (10–49 verified) → 16500 bps (165%)
+//   Gold    (50+   verified) → 13750 bps (137.5%)
 //
 // Skill tier (probabilistic, Wilson 95% lower bound on Phase B win rate):
 //   Calibrated / Unrated → ×1.00 (10000/10000)
@@ -54,7 +54,7 @@ interface IERC8183Core {
 //   Edge-G               → ×0.80 ( 8000/10000) i.e. 20% discount
 //
 // Effective rate = reliabilityBps × skillDiscount / 10000.
-// Minimum mathematically reachable: 12500 × 0.80 = 10000 (= MIN floor).
+// Minimum mathematically reachable: 13750 × 0.80 = 11000 (= MIN floor).
 //
 // Tier changes affect NEW job locks only. Existing job locks are
 // immutable: lockAmt is computed and stored at fund time.
@@ -63,8 +63,10 @@ interface IERC8183Core {
 // setProviderBondRate with the rate corresponding to verifiedCount=0
 // (reliability resets to Bronze). Skill axis is independent.
 //
-// 20% treasury. v2 will move to 60/20/20 with a permissionless filer
-// (implemented in Veriton; integration tracked separately).
+// Slash distribution (3-way): consumer 100% of price (always),
+// challenger 10% of price (deterministic permissionless challenge only;
+// 0 on oracle-initiated Phase A slash), treasury = remainder. The 110%
+// floor guarantees consumer(100%)+challenger(10%) always fit inside lockAmt.
 // ──────────────────────────────────────────────────────────────
 contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -183,7 +185,7 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
     // ── Tier / rate management (oracle-controlled) ────────────
 
     /// @notice Oracle pushes the effective bond rate (basis points) for a provider.
-    /// @dev rateBps must be >= MIN_BOND_RATE_BPS (100%) — guarantees slash ≥ budget.
+    /// @dev rateBps must be >= MIN_BOND_RATE_BPS (110%) — guarantees slash ≥ budget.
     function setProviderBondRate(address provider, uint256 rateBps)
         external onlyRole(ORACLE_ROLE)
     {
