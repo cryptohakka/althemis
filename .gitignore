@@ -18,3 +18,4 @@ broadcast/
 logs/
 *.bak.*
 data/tiers.json.bak.*
+.bak/
