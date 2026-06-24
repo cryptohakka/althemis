@@ -28,8 +28,8 @@ const USDC_ABI = parseAbi([
 const pub = getPublicClient();
 const chain = pub.chain!;
 
-const consumerAcct = privateKeyToAccount(process.env.CONSUMER_PRIVATE_KEY as Hex);
-const providerAcct = privateKeyToAccount(process.env.PROVIDER_PRIVATE_KEY as Hex);
+const consumerAcct = privateKeyToAccount(process.env.CBUYER_PRIVATE_KEY as Hex);
+const providerAcct = privateKeyToAccount(process.env.PCHEAP_PRIVATE_KEY as Hex);
 
 const consumer = createWalletClient({
   account: consumerAcct, chain, transport: http(process.env.ARC_RPC_URL),

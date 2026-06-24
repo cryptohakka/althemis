@@ -41,10 +41,10 @@ export function getPublicClient(): PublicClient {
 }
 
 // ── Wallet client (signing) ───────────────────────────────────
-export function getOracleClient() {
-  const pk = process.env.ORACLE_PRIVATE_KEY;
-  if (!pk) throw new Error('ORACLE_PRIVATE_KEY not set in .env');
-  const account = privateKeyToAccount(pk as `0x${string}`);
+// ── Wallet client factory ─────────────────────────────────────
+/** 汎用 wallet factory — 任意の private key で account 束縛 client を生成 */
+export function makeWalletClient(pk: `0x${string}`) {
+  const account = privateKeyToAccount(pk);
   return createWalletClient({
     account,
     chain: arcChain,
@@ -52,8 +52,41 @@ export function getOracleClient() {
   });
 }
 
+/** oracle は makeWalletClient の特殊ケース */
+export function getOracleClient() {
+  const pk = process.env.ORACLE_PRIVATE_KEY;
+  if (!pk) throw new Error('ORACLE_PRIVATE_KEY not set in .env');
+  return makeWalletClient(pk as `0x${string}`);
+}
+
 export function getOracleAddress(): `0x${string}` {
   const pk = process.env.ORACLE_PRIVATE_KEY;
   if (!pk) throw new Error('ORACLE_PRIVATE_KEY not set in .env');
   return privateKeyToAccount(pk as `0x${string}`).address;
+}
+
+// ── Roster: agent role → wallet ───────────────────────────────
+export type RosterRole = 'PCHEAP' | 'PHONEST' | 'PLIAR' | 'CBUYER' | 'XCHAL';
+
+export const ROSTER_ROLES: RosterRole[] = ['PCHEAP', 'PHONEST', 'PLIAR', 'CBUYER', 'XCHAL'];
+
+export interface RosterAgent {
+  role:    RosterRole;
+  client:  ReturnType<typeof makeWalletClient>;
+  address: `0x${string}`;
+}
+
+/** role の env から wallet client を生成 */
+export function makeRosterAgent(role: RosterRole): RosterAgent {
+  const pk = process.env[`${role}_PRIVATE_KEY`];
+  if (!pk) throw new Error(`${role}_PRIVATE_KEY not set in .env`);
+  const client = makeWalletClient(pk as `0x${string}`);
+  return { role, client, address: client.account!.address };
+}
+
+/** roster 全員を生成。起動時に1回呼んで使い回す(singleton 前提) */
+export function loadRoster(): Record<RosterRole, RosterAgent> {
+  const out = {} as Record<RosterRole, RosterAgent>;
+  for (const role of ROSTER_ROLES) out[role] = makeRosterAgent(role);
+  return out;
 }
