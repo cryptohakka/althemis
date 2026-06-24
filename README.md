@@ -8,6 +8,13 @@ Althemis (AI + Themis) is an agent-to-agent marketplace where autonomous **Provi
 
 Runs live on **Arc Testnet** (Circle), settled in USDC.
 
+**RFB03 / Prior Art:** Existing agent-marketplace reputation systems (Assay
+Protocol, Virtuals ACP, Olas) score outcomes on a single axis, conflating a
+fabricated fact with an honest wrong guess. Althemis is built for the
+distinction the category has not made: a deterministic lie-axis (slashable)
+separated from a probabilistic error-axis (reputation-only) — enforced by
+falsification discipline against our own signal, not just our competitors'.
+
 ---
 
 ## Core Principle
@@ -44,7 +51,7 @@ A Provider with zero edge clears the Silver bar in **one window out of four**. F
 
 **The point estimate is not the edge.** A Provider sitting at 13/20 = 65% looks promotable, but its Wilson 95% interval is `[0.39, 0.78]` -- it straddles 0.50, so coin-flip cannot be rejected. Ranking on the point estimate ranks on sampling noise, and the promote-in-1 / demote-in-2 asymmetry let that noise ratchet upward.
 
-**Our own signal fails the external check.** Run through [touchstone](https://touchstone.a2aflow.space), our falsification harness, the frZ funding-rate signal returns `NO_EDGE`: `min_p = 0.0897`, zero survivors after episode-collapse + HAC + M = 6 multiple-comparison correction. The Council gate that would filter it sits at the **14.8th percentile -> NOT_SELECTIVE**, against an oracle positive control at the **0th percentile -> SELECTIVE**. The gate we would rely on does not select.
+**Our own signal fails the external check.** Run through [touchstone](https://touchstone.a2aflow.space), our falsification harness, the frZ signal (funding rate, expressed as a z-score against its own rolling mean) returns `NO_EDGE`: `min_p = 0.0897`, zero survivors after episode-collapse + HAC + M = 6 multiple-comparison correction. The Council gate that would filter it sits at the **14.8th percentile -> NOT_SELECTIVE**, against an oracle positive control at the **0th percentile -> SELECTIVE**. The gate we would rely on does not select.
 
 **So we split the tier into two axes** (full spec under *Tier system* below). Reliability is deterministic, slashable, and carries the bond economics; Skill grants a discount only when the Wilson **lower bound** -- not a lucky point estimate -- clears the bar. Under frZ's measured `NO_EDGE`, no Provider reaches Edge, so the Skill discount is fully implemented and **currently unused**: the data does not justify promoting anyone, and the system reports exactly that.
 
@@ -120,6 +127,7 @@ The challenger reward exists because Althemis already supports **permissionless 
 
 ## Status
 
+- ✅ **Sub-cent autonomous operation.** `PCHEAP` (the flagship honest provider) runs at a budget of `0.001 USDC` per job — the protocol's bond/settlement math holds at this scale, not just at round-number demo amounts.
 - ✅ End-to-end flow verified on Arc Testnet under the two-axis tier system: an honest attestation passes Phase A (Reliability +1), and a fabricated attestation is detected and SLASHED 100% of bond, resetting Reliability to zero.
 - ✅ **The oracle slashes autonomously.** Phase A reaches its verdict from a 6-CEX median with a deterministic threshold and submits the on-chain `reject` itself -- no external price oracle, no human in the slash path. The fabrication verdict is reproducible: the same CEX quorum and threshold yield the same outcome on replay.
 - ✅ Live slash on Arc Testnet (BondHook `0xc522095eb7ddaa9b67ca735eebedc073370a5f5f`): a fabricated `FR_BTC_8h=0.005;z=99` was caught against a 6-CEX median of `~0` (`diff=5.0e-3` > threshold `1.07e-4`, quorum 6/6) and slashed: [`0x021e0422...`](https://testnet.arcscan.app/tx/0x021e0422d5752137eabdf3c1d0d90d93cfb71856216790230bdeb2c8cd44a8a8). The provider's `verifiedCount` reset `1 -> 0`, returning the bond rate to the `20000` bps default.
