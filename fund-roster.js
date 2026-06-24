@@ -15,8 +15,8 @@ const USDC_ABI = parseAbi([
 // 配布先と目標残高(不足分のみ補填)。Phase2で PHONEST/PLIAR/XCHAL を解禁。
 const TARGETS = [
   { role: 'PCHEAP', eth: '0.1', usdc: '5' },
-  // { role: 'PHONEST', eth: '0.1', usdc: '5' },
-  // { role: 'PLIAR',   eth: '0.1', usdc: '5' },
+  { role: 'PHONEST', eth: '0.1', usdc: '5' },
+  { role: 'PLIAR',   eth: '0.1', usdc: '5' },
   // { role: 'XCHAL',   eth: '0.1', usdc: '5' },
 ];
 
