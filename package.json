@@ -16,11 +16,18 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@circle-fin/x402-batching": "^3.2.0",
     "@types/node": "^25.9.3",
+    "@x402/core": "^2.16.0",
+    "@x402/evm": "^2.16.0",
     "axios": "^1.17.0",
     "dotenv": "^17.4.2",
+    "express": "^5.2.1",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "viem": "^2.52.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6"
   }
 }

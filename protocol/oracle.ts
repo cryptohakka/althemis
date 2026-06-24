@@ -31,6 +31,18 @@
  *   OI: per-CEX OI verification not yet implemented — jobs held, never
  *   auto-passed (a placeholder pass would silently break the deterministic layer).
  *
+ *   CONF (dual-tier x402 commissioning, PCONF role only):
+ *     On-chain description carries a commit-hash, not the raw value.
+ *     The raw value is relayed privately (confidential-relay.ts) by the
+ *     commissioning server at job-creation time. Phase A verifies the
+ *     hash, then runs the IDENTICAL Phase A fabrication check against the
+ *     revealed value — tier selection changes WHO can see the value, never
+ *     WHAT the oracle punishes. The raw value becomes public again at
+ *     Phase B settlement (embargo model), since settleFRPrediction's
+ *     `detail` always carries attested/realized values into logEvent.
+ *     PCONF is never in ROSTER_POLICY / getActiveRoles — this oracle loop
+ *     is the only place that ever touches CONF jobs.
+ *
  *   Tier integration (tier.ts):
  *     Phase A verified → recordVerified(provider) (+1 reliability count)
  *     Phase A slash    → recordSlash(provider)    (reset reliability to 0)
@@ -48,6 +60,7 @@ import {
   type Job,
 } from './escrow.js';
 import { recordOutcome, recordVerified, recordSlash } from './tier.js';
+import { getRelay, deleteRelay, computeCommitHash } from './confidential-relay.js';
 
 // ── Config ────────────────────────────────────────────────────
 const POLL_INTERVAL_MS = 5 * 60 * 1000;  // 5 min
@@ -98,6 +111,16 @@ function decodeDelivery(description: string): DeliveryDecoded | null {
   };
 }
 
+// CONF format: CONF_<ASSET>_<window>=<commit-hash>. Raw value is NOT here —
+// it lives only in confidential-relay.ts until Phase A verifies the hash.
+const CONF_RE = /^CONF_([A-Z]+)_(\d+h)=(0x[0-9a-fA-F]{64})$/;
+interface ConfDecoded { asset: string; window: string; commitHash: Hex }
+function decodeConfidential(description: string): ConfDecoded | null {
+  const m = description.match(CONF_RE);
+  if (!m) return null;
+  return { asset: m[1], window: m[2], commitHash: m[3] as Hex };
+}
+
 // ── Oracle state (data/oracle_state.json) ─────────────────────
 type AttestationStatus = 'verified' | 'unverifiable';
 
@@ -135,6 +158,7 @@ function logEvent(e: {
   outcome: string;            // verified | unverifiable | slashed | win | loss | no_contest
   tx?: string | null;
   detail?: string;
+  confidential?: boolean;     // true for CONF-tier jobs (dual-tier x402 commissioning)
 }): void {
   try {
     mkdirSync('./data', { recursive: true });
@@ -153,7 +177,7 @@ interface CexFrData {
   rate: number;
 }
 
-async function fetch6CexFR(asset: string): Promise<CexFrData[]> {
+export async function fetch6CexFR(asset: string): Promise<CexFrData[]> {
   const symbol = `${asset}USDT`;
   const results: CexFrData[] = [];
 
@@ -215,7 +239,7 @@ async function fetch6CexFR(asset: string): Promise<CexFrData[]> {
 }
 
 /** Compute median and MAD (Median Absolute Deviation) */
-function medianMad(values: number[]): { median: number; mad: number } {
+export function medianMad(values: number[]): { median: number; mad: number } {
   if (values.length === 0) return { median: 0, mad: 0 };
   const sorted = [...values].sort((a, b) => a - b);
   const mid    = Math.floor(sorted.length / 2);
@@ -318,11 +342,62 @@ async function processJobs(): Promise<void> {
   const state = loadState();
 
   for (const job of jobs) {
-    const decoded = decodeDelivery(job.description);
-    if (!decoded) {
-      console.warn(`[oracle] job #${job.jobId}: unrecognized description: ${job.description}`);
-      continue;
+    const key = job.jobId.toString();
+    const submitTimeMs = Number(job.submittedAt) * 1000;
+    const ageMs = Date.now() - submitTimeMs;
+
+    // ── Decode: plain signal format (unchanged path), or CONF dual-tier ──
+    // x402 commissioning format. Plain path below is byte-for-byte identical
+    // to the pre-CONF implementation — CONF is a pure addition, never taken
+    // unless decodeDelivery() returns null.
+    let decoded: DeliveryDecoded;
+    let isConfidential = false;
+
+    const plainDecoded = decodeDelivery(job.description);
+    if (plainDecoded) {
+      decoded = plainDecoded;
+    } else {
+      const conf = decodeConfidential(job.description);
+      if (!conf) {
+        console.warn(`[oracle] job #${job.jobId}: unrecognized description: ${job.description}`);
+        continue;
+      }
+      isConfidential = true;
+
+      if (state[key]) {
+        // Already attested in a prior cycle (now in Phase B) — reuse stored value,
+        // no relay lookup needed (relay was already deleted at Phase A resolution).
+        decoded = {
+          type: 'FR', asset: conf.asset, window: conf.window,
+          value: state[key].attestedValue, z: null, dir: null, raw: job.description,
+        };
+      } else {
+        const relay = getRelay(key);
+        if (!relay) {
+          console.log(`[oracle] job #${key}: CONF job awaiting relay entry, retrying next poll`);
+          continue; // commissioning server may not have written it yet — never slash on this
+        }
+        const expectHash = computeCommitHash(relay.value, relay.nonce);
+        if (expectHash.toLowerCase() !== conf.commitHash.toLowerCase()) {
+          console.warn(`[oracle] job #${key}: CONF commit hash mismatch — treating as fabricated`);
+          try {
+            const txHash = await slashJob(job.jobId);
+            logEvent({ phase: 'A', jobId: key, outcome: 'slashed', tx: txHash,
+                       detail: 'CONF commit hash mismatch', confidential: true });
+            await recordSlash(job.provider);
+          } catch (err) {
+            console.error(`[oracle] job #${key}: slash tx failed:`, err);
+          }
+          deleteRelay(key);
+          continue;
+        }
+        decoded = {
+          type: 'FR', asset: relay.asset, window: relay.window,
+          value: relay.value, z: null, dir: null, raw: job.description,
+        };
+      }
     }
+
     if (decoded.type === 'REGIME') {
       console.log(`[oracle] job #${job.jobId}: REGIME — adjudicator-settled, skipping`);
       continue;
@@ -331,10 +406,6 @@ async function processJobs(): Promise<void> {
       console.log(`[oracle] job #${job.jobId}: OI — verification not implemented, holding`);
       continue;
     }
-
-    const key = job.jobId.toString();
-    const submitTimeMs = Number(job.submittedAt) * 1000;
-    const ageMs = Date.now() - submitTimeMs;
 
     // ── Phase A: attestation (only once, while fresh) ──
     if (!state[key]) {
@@ -354,13 +425,15 @@ async function processJobs(): Promise<void> {
               `diff=${result.diff.toFixed(6)} > threshold=${result.threshold.toFixed(6)} tx=${txHash}`
             );
             logEvent({ phase: 'A', jobId: key, outcome: 'slashed', tx: txHash,
-                       detail: `diff=${result.diff.toFixed(6)} threshold=${result.threshold.toFixed(6)}` });
+                       detail: `diff=${result.diff.toFixed(6)} threshold=${result.threshold.toFixed(6)}`,
+                       ...(isConfidential ? { confidential: true } : {}) });
             // Reliability axis: reset verifiedCount to 0 (deterministic punishment).
             // Skill axis is independent — fabrication does not retroactively affect Phase B history.
             await recordSlash(job.provider);
           } catch (err) {
             console.error(`[oracle] job #${key}: slash tx failed:`, err);
           }
+          if (isConfidential) deleteRelay(key);
           continue;
         }
 
@@ -377,9 +450,11 @@ async function processJobs(): Promise<void> {
         };
         saveState(state);
         console.log(`[oracle] job #${key}: attestation VERIFIED, settles in ${(windowMsFor(decoded.type) / 3600000).toFixed(0)}h`);
-        logEvent({ phase: 'A', jobId: key, outcome: 'verified', detail: decoded.raw });
+        logEvent({ phase: 'A', jobId: key, outcome: 'verified', detail: decoded.raw,
+                   ...(isConfidential ? { confidential: true } : {}) });
         // Reliability axis: +1 to verified count (deterministic reward for honest attestation).
         await recordVerified(job.provider);
+        if (isConfidential) deleteRelay(key);
         continue;
       } else {
         // Missed the freshness window (oracle downtime). Fail-safe:
@@ -396,6 +471,7 @@ async function processJobs(): Promise<void> {
         };
         saveState(state);
         console.warn(`[oracle] job #${key}: attestation UNVERIFIABLE (age ${(ageMs / 60000).toFixed(0)}min) — will settle without tier impact`);
+        if (isConfidential) deleteRelay(key);
         continue;
       }
     }
@@ -414,7 +490,8 @@ async function processJobs(): Promise<void> {
         const reason = keccak256(toBytes(`SETTLE:unverifiable:${js.signal}`)) as Hex;
         const txHash = await completeJob(job.jobId, reason);
         console.log(`[oracle] job #${key}: COMPLETE (unverifiable, no tier impact) tx=${txHash}`);
-        logEvent({ phase: 'A', jobId: key, outcome: 'unverifiable', tx: txHash });
+        logEvent({ phase: 'A', jobId: key, outcome: 'unverifiable', tx: txHash,
+                   ...(isConfidential ? { confidential: true } : {}) });
         delete state[key];
         saveState(state);
       } catch (err) {
@@ -440,7 +517,10 @@ async function processJobs(): Promise<void> {
       const reason = keccak256(toBytes(`SETTLE:${outcome.kind}:${outcome.detail}`)) as Hex;
       const txHash = await completeJob(job.jobId, reason);
       console.log(`[oracle] job #${key}: COMPLETE (${outcome.kind}) ${outcome.detail} tx=${txHash}`);
-      logEvent({ phase: 'B', jobId: key, outcome: outcome.kind, tx: txHash, detail: outcome.detail });
+      // NOTE: outcome.detail carries attested+realized values — this IS the
+      // Phase B reveal for CONF jobs (embargo model: hidden at Phase A, public here).
+      logEvent({ phase: 'B', jobId: key, outcome: outcome.kind, tx: txHash, detail: outcome.detail,
+                 ...(isConfidential ? { confidential: true } : {}) });
 
       if (outcome.kind === 'win' || outcome.kind === 'loss') {
         await recordOutcome(job.provider, job.jobId, outcome.kind);
