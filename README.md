@@ -233,6 +233,12 @@ punishes.** Both tiers go through the IDENTICAL Phase A fabrication check
 (`max(3×MAD, floor)` against live 6-CEX median) — confidentiality never
 weakens the deterministic punishment layer.
 
+**Why $0.01 / $0.05, not Lepton's sub-$0.000001 nano-floor:** bonded
+signals require bond economics to make sense. At sub-cent prices the bond
+yield collapses below operator cost. Althemis prices at the lowest level
+where slashable honesty is economically viable — and composes naturally
+with downstream nano-tier consumers via Gateway batching.
+
 **This is commit-hash confidentiality, not zero-knowledge.** The oracle
 process (and anyone with filesystem access to the VPS) can always see the
 raw value. What's hidden is from external third-party observers reading
@@ -248,19 +254,33 @@ hidden, never permanently opaque.
 **What's real vs what's staged (Plan B, extended):**
 - L1 (immutable): both tiers run through the unmodified ERC8183/BondHook
   contract suite — same job lifecycle, same bond math, same slash path.
-- L2 (operator demo harness): PCONF is a real, separately-funded wallet
-  (0.1 ETH / 5 USDC) executing real on-chain transactions (createJob →
-  setBudget → fundJob → submitSignal, self-dealing by design since PCONF
-  plays both consumer and provider role for its own commissioned jobs).
-- L3 (external participants): **zero, disclosed honestly.** The x402
-  payment gate itself is verified working end-to-end — `POST
-  /commission-signal/open` and `/confidential` both correctly return
-  `402 Payment Required` with a valid Circle Gateway payment requirement
-  (verified amount, payTo, network) when called without payment. The full
-  loop — an external buyer actually signing and submitting a Circle Gateway
-  payment, the server settling it, and a confidential job revealing at
-  Phase B — has NOT been exercised against a real buyer client; no such
-  client was built in this session. This is disclosed, not hidden.
+- L2 (operator demo harness): PCONF (provider) and PCONF_CONSUMER
+  (buyer-side EOA) are two separately-funded wallets executing real
+  on-chain transactions — createJob/fundJob signed by PCONF_CONSUMER,
+  setBudget/submitSignal signed by PCONF — avoiding ERC8183's
+  `client == provider` rejection (confirmed via `simulateContract`: the
+  contract reverts on self-dealing with a dedicated custom error) and
+  matching the same consumer/provider split already used by the
+  autonomous CBUYER → PCHEAP path.
+- L3 (external participants): **zero independent third parties,
+  disclosed honestly** — but the full x402 payment loop has been exercised
+  end-to-end against both tiers using a real, independently-funded
+  ephemeral buyer EOA (Circle Gateway deposit → `gateway.pay()` → 402
+  challenge resolved → settlement). Verified on-chain for both tiers:
+
+  | Tier | Job ID | Settle amount | Submit tx |
+  |---|---|---|---|
+  | open | 899 | $0.01 | [`0xd0d2b206...`](https://testnet.arcscan.app/tx/0xd0d2b206d236b742ee1e9fd5c8e758898afd58b6482a5f78dcc3d2069c75e259) |
+  | confidential | 911 | $0.05 | [`0x41d8cec6...`](https://testnet.arcscan.app/tx/0x41d8cec6667fa56ee9638fb7791e663221e3f70ef4c0d2680853caf5176d6b90) |
+
+  Both submit transactions route through Arc's native [Transaction Memo
+  contract](https://testnet.arcscan.app/address/0x5294E9927c3306DcBaDb03fe70b92e01cCede505)
+  (`to == MEMO`), preserve `msg.sender` as the PCONF provider via
+  `CallFrom`, and emit a `Memo` event with `memoId == jobId` — giving any
+  external observer a deterministic on-chain index from commissioning
+  payment to settled job. The buyer client used for this verification is
+  a probe script, not a production-grade integration; what's verified is
+  the payment-to-settlement path itself, not a polished buyer UX.
 
 **Known scope limitation:** the confidential relay schema currently carries
 only `{value, nonce, asset, window}` — no `z`/`dir`. Confidential-tier jobs
