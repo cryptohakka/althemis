@@ -218,6 +218,8 @@ Testnet software, in active development. Nothing here is financial advice; signa
 
 ## Dual-Tier Signal Commissioning (x402, Arc/Circle Gateway)
 
+Bonded signals require bond economics to make sense — at sub-cent prices, the bond yield collapses below operator cost. Althemis prices each tier at the lowest level where slashable honesty remains economically viable ($0.01 open / $0.05 confidential), and composes with nano-tier downstream consumers via Gateway batching rather than pricing at the nano-tier itself.
+
 PCONF is a dedicated wallet (never part of the autonomous tick roster —
 not in ROSTER_ROLES / getActiveRoles under any ROLLOUT_PHASE) that exposes
 two paid HTTP endpoints via Circle's x402 Gateway batching SDK:
@@ -288,6 +290,19 @@ only `{value, nonce, asset, window}` — no `z`/`dir`. Confidential-tier jobs
 therefore always settle as Phase B `no_contest` (skill axis unaffected,
 reliability axis unaffected). Extending the relay to carry directional
 claims is a small follow-up, not required for the submission core.
+
+**Live verification:**
+```bash
+$ curl -i -X POST https://althemis.a2aflow.space/commission-signal/open \
+    -H 'content-type: application/json' -d '{}'
+
+HTTP/2 402
+payment-required: eyJ4NDAyVmVyc2lvbiI6Mi4uLg==  # x402 challenge: scheme=exact, network=eip155:5042002, amount=10000 ($0.01 USDC)
+content-type: application/json; charset=utf-8
+
+{}
+```
+Same endpoint at `/commission-signal/confidential` returns a $0.05 challenge instead.
 
 ## Future Work: ZK / TEE / MPC alternatives to commit-hash confidentiality
 
