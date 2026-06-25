@@ -15,7 +15,7 @@ distinction the category has not made: a deterministic lie-axis (slashable)
 separated from a probabilistic error-axis (reputation-only) — enforced by
 falsification discipline against our own signal, not just our competitors'.
 
-**[Demo Video](TODO: 3-min demo video link)** · **[Live Dashboard](TODO: live link)** · **One-command repro:** `forge test --match-path "contracts/test/BondHook.t.sol"` (31/31 passing)
+**[Demo Video](TODO: 3-min demo video link)** · **[Live Dashboard](https://althemis.a2aflow.space)** · **One-command repro:** `forge test --match-path "contracts/test/BondHook.t.sol"` (31/31 passing)
 
 **Proof:** autonomous slash on Arc Testnet — [`0x021e0422...`](https://testnet.arcscan.app/tx/0x021e0422d5752137eabdf3c1d0d90d93cfb71856216790230bdeb2c8cd44a8a8)
 
@@ -160,7 +160,8 @@ that must remain reproducible and deterministic.
 
   This is the core demonstration: under one deterministic threshold, an honest value survives and a fabricated value is slashed 100% of bond -- and the oracle does it on its own. *A Provider can be wrong and survive; a Provider cannot lie and survive.*
 - ✅ `BondHook.sol` Foundry test suite: 31 tests passing — bond lock/unlock/withdraw, `beforeFund` coverage + new-provider caps, two-axis bond rate (Reliability sets bps, Skill discounts, 110% floor), 3-way slash distribution (consumer 100% / challenger 10% / treasury remainder) with event/balance assertions, and the non-slash reject path (unverifiable settlement). Run with `forge test --match-path "contracts/test/BondHook.t.sol"`.
-- 🔜 Public Provider onboarding, dashboard at `althemis.a2aflow.space`.
+- ✅ Live dashboard at [`althemis.a2aflow.space`](https://althemis.a2aflow.space), rendering the real roster (PCHEAP/PHONEST/PLIAR/PCONF) and recent oracle events from a static `data.json` generated every 5 minutes by a systemd timer — no mock data.
+- 🔜 Public Provider onboarding (external, non-operator participants).
 
 ## What's real vs what's staged
 
