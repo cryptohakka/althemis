@@ -47,6 +47,8 @@ const PRICE_CONFIDENTIAL = process.env.PCONF_PRICE_CONFIDENTIAL_USD || '$0.05';
 
 if (!process.env.PCONF_PRIVATE_KEY) throw new Error('PCONF_PRIVATE_KEY not set in .env');
 const pconf = makeWalletClient(process.env.PCONF_PRIVATE_KEY as `0x${string}`);
+if (!process.env.PCONF_CONSUMER_PRIVATE_KEY) throw new Error('PCONF_CONSUMER_PRIVATE_KEY not set in .env');
+const pconfConsumer = makeWalletClient(process.env.PCONF_CONSUMER_PRIVATE_KEY as `0x${string}`);
 
 const pub = getPublicClient();
 const USDC_ABI = parseAbi(['function decimals() view returns (uint8)']);
@@ -95,7 +97,7 @@ async function commission(tier: 'open' | 'confidential', req: Request, res: Resp
   const budget = parseUnits(BUDGET_USDC, dec);
   await ensureBond(budget);
 
-  const jobId = await createJob(pconf, {
+  const jobId = await createJob(pconfConsumer, {
     provider: pconf.account!.address,
     description,
   });
@@ -107,7 +109,7 @@ async function commission(tier: 'open' | 'confidential', req: Request, res: Resp
   }
 
   await setBudget(pconf, jobId, budget);
-  await fundJob(pconf, jobId, budget);
+  await fundJob(pconfConsumer, jobId, budget);
   // Memo-wrapped submit: emit commissioning provenance (payer / x402 settle tx /
   // tier) as an indexed on-chain Memo event keyed by jobId. Plaintext memoData —
   // for confidential tier we carry ONLY commitHash, never the raw value (embargo).

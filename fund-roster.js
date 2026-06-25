@@ -18,6 +18,7 @@ const TARGETS = [
   { role: 'PHONEST', eth: '0.1', usdc: '5' },
   { role: 'PLIAR',   eth: '0.1', usdc: '5' },
   { role: 'PCONF',   eth: '0.1', usdc: '5' },
+  { role: 'PCONF_CONSUMER', eth: '0.1', usdc: '5' },
   // { role: 'XCHAL',   eth: '0.1', usdc: '5' },
 ];
 
