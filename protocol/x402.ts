@@ -16,7 +16,11 @@ const ARC_TESTNET_GATEWAY_WALLET = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
 
 export const sellerAddress = process.env.PCONF_WALLET as `0x${string}`;
 
-const facilitator = new BatchFacilitatorClient();
+// testnet Gateway API を指定(既定は mainnet → eip155:5042002 が unsupported_network になる)。
+// 既定 URL "https://gateway-api.circle.com" は mainnet 専用。
+const facilitator = new BatchFacilitatorClient({
+  url: process.env.GATEWAY_API_URL || "https://gateway-api-testnet.circle.com",
+});
 
 interface PaymentPayload {
   x402Version: number;
@@ -53,6 +57,7 @@ export function withGateway(price: string, endpoint: string) {
   const requirements = buildPaymentRequirements(price);
 
   return async (req: Request, res: Response, next: NextFunction) => {
+    // ── TEMP DEBUG (検証後に削除) ──
     const paymentSignature = req.headers["payment-signature"] as string | undefined;
 
     if (!paymentSignature) {

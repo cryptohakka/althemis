@@ -473,3 +473,41 @@ export async function getChallengeableJobs(): Promise<Job[]> {
     return expiredSquatter || postExpirySubmit;
   });
 }
+
+// ── Memo-wrapped submit (PCONF commissioning provenance) ──────────
+// Additive. The existing submitSignal() above is byte-for-byte untouched —
+// PCHEAP/PHONEST/PLIAR/main.js keep using it. Only commission-server calls this.
+// Inner calldata is IDENTICAL to submitSignal's submit(jobId, deliverable, '0x');
+// the only difference is the outer Memo wrapper that emits provenance keyed by
+// jobId. msg.sender to ERC8183 is preserved by the CallFrom precompile (EOA-only;
+// PCONF is an EOA). See protocol/memo.ts.
+export async function submitSignalWithMemo(
+  walletClient: ReturnType<typeof makeWalletClient>,
+  jobId: bigint,
+  signalValue: string,
+  memo: Record<string, unknown>,
+): Promise<Hex> {
+  const { keccak256, toBytes, toHex, stringToHex, encodeFunctionData } = await import('viem');
+  const { MEMO_ADDRESS, MEMO_ABI } = await import('./memo.js');
+
+  const deliverable = keccak256(toBytes(signalValue));
+  // inner = exactly what submitSignal() sends to ERC8183
+  const inner = encodeFunctionData({
+    abi: ERC8183_ABI,
+    functionName: 'submit',
+    args: [jobId, deliverable, '0x'],
+  });
+
+  const memoId   = toHex(jobId, { size: 32 });                    // reversible → dashboard join key
+  const memoData = stringToHex(JSON.stringify({ v: 1, ...memo })); // plaintext: caller must NOT pass raw CONF value
+
+  const hash = await walletClient.writeContract({
+    address: MEMO_ADDRESS,
+    abi: MEMO_ABI,
+    functionName: 'memo',
+    args: [ERC8183_ADDRESS, inner, memoId, memoData],
+    chain: walletClient.chain!,
+  });
+  await waitForSuccess(hash, 'submitSignalWithMemo');
+  return hash;
+}

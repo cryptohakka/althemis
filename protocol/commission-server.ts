@@ -30,7 +30,7 @@ import { parseUnits, parseAbi } from 'viem';
 import { getPublicClient, makeWalletClient } from './arc.js';
 import {
   USDC_ADDRESS,
-  createJob, setBudget, fundJob, submitSignal,
+  createJob, setBudget, fundJob, submitSignal, submitSignalWithMemo,
   getProviderBondRate, getFreeBalance, depositBond,
 } from './escrow.js';
 import { getFRSignal } from '../providers.js';
@@ -73,7 +73,7 @@ async function ensureBond(budget: bigint): Promise<void> {
 /** Shared commissioning logic for both tiers. Always delivers the CURRENT
  *  live FR signal (even neutral) — consistent with how PCHEAP's tick loop
  *  treats neutral signals as still-real, still-sellable data points. */
-async function commission(tier: 'open' | 'confidential', res: Response) {
+async function commission(tier: 'open' | 'confidential', req: Request, res: Response) {
   const result = await getFRSignal();
   const sig = result.signal;
   const frValue = parseFloat(((sig as any).avgFR ?? 0).toFixed(8));
@@ -108,7 +108,23 @@ async function commission(tier: 'open' | 'confidential', res: Response) {
 
   await setBudget(pconf, jobId, budget);
   await fundJob(pconf, jobId, budget);
-  await submitSignal(pconf, jobId, description);
+  // Memo-wrapped submit: emit commissioning provenance (payer / x402 settle tx /
+  // tier) as an indexed on-chain Memo event keyed by jobId. Plaintext memoData —
+  // for confidential tier we carry ONLY commitHash, never the raw value (embargo).
+  const x = (req as any).x402 ?? {};
+  const baseMemo = {
+    tier,
+    payer:   x.payer,
+    x402Tx:  x.transaction,
+    amount:  x.amountUsdc,
+    network: x.network,
+    asset, window,
+  };
+  const memo = tier === 'confidential'
+    ? { ...baseMemo, commitHash: confidentialMeta!.commitHash }
+    : { ...baseMemo, value: frValue, z: sig.frZ, dir: sig.direction };
+
+  await submitSignalWithMemo(pconf, jobId, description, memo);
 
   console.log(`[pconf] ${tier} job #${jobId} commissioned: ${description}`);
 
@@ -129,7 +145,7 @@ app.post(
   withGateway(PRICE_OPEN, '/commission-signal/open'),
   async (req: Request, res: Response) => {
     try {
-      await commission('open', res);
+      await commission('open', req, res);
     } catch (e: any) {
       console.error('[pconf] open commission failed:', e.message);
       res.status(500).json({ error: e.message });
@@ -142,7 +158,7 @@ app.post(
   withGateway(PRICE_CONFIDENTIAL, '/commission-signal/confidential'),
   async (req: Request, res: Response) => {
     try {
-      await commission('confidential', res);
+      await commission('confidential', req, res);
     } catch (e: any) {
       console.error('[pconf] confidential commission failed:', e.message);
       res.status(500).json({ error: e.message });
