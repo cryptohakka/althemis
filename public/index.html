@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Althemis · Bonded Signal Market</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0A0F1A; --surface:#101A2C; --surface-2:#0E1626;
+    --line:#1C2840; --blue:#3B82F6; --blue-bright:#5C9DFF; --blue-dim:#23365A;
+    --text:#E7EEFA; --text-2:#93A4C0; --text-3:#7387A8; --muted:#6B7C99;
+    --bronze:#C39A63; --silver:#C2CBD8; --gold:#E0BC63;
+    --danger:#E5645C; --teal:#46D3C2; --amber:#E0A85C; --r:14px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:
+      radial-gradient(1200px 600px at 78% -10%, #11203A 0%, rgba(17,32,58,0) 60%),
+      radial-gradient(900px 500px at 0% 0%, #0d1830 0%, rgba(13,24,48,0) 55%),
+      var(--bg);
+    color:var(--text); font-family:"Inter",system-ui,-apple-system,sans-serif;
+    -webkit-font-smoothing:antialiased; min-height:100vh; padding:0 0 64px;
+  }
+  .tabnum{font-variant-numeric:tabular-nums}
+  .mono{font-family:"JetBrains Mono",ui-monospace,monospace}
+
+  .topbar{display:flex;align-items:center;justify-content:space-between;padding:18px 28px;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20;background:rgba(10,15,26,.72);backdrop-filter:blur(10px)}
+  .brand{display:flex;align-items:center;gap:11px}
+  .scales{width:26px;height:26px;flex:0 0 auto}
+  .brand .name{font-family:"Space Grotesk",sans-serif;font-weight:700;font-size:19px;letter-spacing:.2px}
+  .brand .name b{color:var(--blue-bright);font-weight:700}
+  .net{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--text-2)}
+  .net .dot{width:7px;height:7px;border-radius:50%;background:var(--teal);box-shadow:0 0 0 3px rgba(70,211,194,.14)}
+  .topbar .right{display:flex;align-items:center;gap:18px}
+  .acct{font-size:12.5px;color:var(--text-2);display:flex;gap:8px;align-items:center}
+  .acct .mono{color:var(--text)}
+  .btn-ghost{font-family:inherit;font-size:13px;color:var(--text);background:transparent;border:1px solid var(--line);padding:8px 14px;border-radius:9px;cursor:pointer;transition:.15s}
+  .btn-ghost:hover{border-color:var(--blue-dim);background:#0e1832}
+
+  .wrap{max-width:1140px;margin:0 auto;padding:0 24px}
+  .hero{padding:44px 0 20px}
+  .thesis{font-family:"Space Grotesk",sans-serif;font-weight:600;font-size:clamp(26px,4vw,40px);line-height:1.08;letter-spacing:-.4px;margin:0 0 14px}
+  .thesis .err{color:var(--text-2)} .thesis .lie{color:var(--blue-bright)}
+  .sub{color:var(--text-2);font-size:15px;max-width:660px;line-height:1.55;margin:0}
+  .sub b{color:var(--text);font-weight:600}
+
+  .guarantee{display:flex;gap:14px;align-items:flex-start;margin-top:22px;background:linear-gradient(180deg,rgba(70,211,194,.06),rgba(70,211,194,.02));border:1px solid #1d3a3a;border-left:3px solid var(--teal);border-radius:11px;padding:14px 16px;max-width:760px}
+  .guarantee .ic{flex:0 0 auto;margin-top:1px}
+  .guarantee p{margin:0;font-size:13px;line-height:1.55;color:var(--text-2)}
+  .guarantee p b{color:var(--text);font-weight:600}
+  .guarantee .warn{color:var(--text-3)}
+
+  .stat-row{display:flex;gap:34px;margin-top:22px;flex-wrap:wrap}
+  .stat .v{font-family:"Space Grotesk",sans-serif;font-weight:600;font-size:21px}
+  .stat .v small{font-size:12px;color:var(--text-2);font-weight:500;margin-left:3px}
+  .stat .k{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-top:3px}
+
+  /* primary view tabs */
+  .tabs{display:flex;gap:6px;margin-top:30px;border-bottom:1px solid var(--line)}
+  .tab{font-family:"Space Grotesk",sans-serif;font-size:14px;font-weight:500;color:var(--text-2);background:transparent;border:0;border-bottom:2px solid transparent;padding:11px 4px;margin-right:18px;cursor:pointer;transition:.14s;display:flex;align-items:center;gap:8px}
+  .tab:hover{color:var(--text)}
+  .tab[aria-selected="true"]{color:var(--text);border-bottom-color:var(--blue-bright)}
+  .tab .cnt{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:5px;padding:1px 6px}
+  .tab[aria-selected="true"] .cnt{color:var(--blue-bright);border-color:var(--blue-dim)}
+
+  .view{display:none} .view.on{display:block}
+
+  .card{background:linear-gradient(180deg,var(--surface) 0%,var(--surface-2) 100%);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;margin-top:20px}
+  .card-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line)}
+  .card-head h2{font-family:"Space Grotesk",sans-serif;font-size:15px;font-weight:600;margin:0;letter-spacing:.2px;display:flex;align-items:center;gap:9px}
+  .card-head .hint{font-size:11.5px;color:var(--muted);font-weight:400;display:inline-flex;align-items:center;gap:5px}
+  .mockflag{display:inline-block;font-size:10.5px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:var(--danger);border:1px solid rgba(229,100,92,.4);background:rgba(229,100,92,.08);padding:2px 8px;border-radius:6px}
+  .seg{display:flex;gap:2px;background:#0c1526;border:1px solid var(--line);border-radius:9px;padding:3px}
+  .seg button{font-family:inherit;font-size:12px;color:var(--text-2);background:transparent;border:0;padding:6px 12px;border-radius:6px;cursor:pointer;transition:.12s}
+  .seg button[aria-pressed="true"]{background:var(--blue-dim);color:var(--text)}
+
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  .grp th{padding:11px 14px 5px;border:0;font-family:"Space Grotesk",sans-serif;font-size:10.5px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;text-align:left;color:var(--muted)}
+  .grp th.gRel{color:var(--gold)} .grp th.gAcc{color:var(--blue-bright)}
+  .grp th .g2{display:block;font-family:"Inter",sans-serif;font-weight:400;font-size:10px;letter-spacing:.2px;text-transform:none;color:var(--text-3);margin-top:2px}
+  thead.cols th{text-align:left;font-weight:500;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.7px;padding:4px 14px 13px;border-bottom:1px solid var(--line);white-space:nowrap}
+  thead.cols th.num{text-align:right}
+  thead.cols th .lc{text-transform:none;letter-spacing:0;color:#46506a}
+  .sep{border-left:1px solid var(--line)}
+  tbody td{padding:15px 14px;border-bottom:1px solid #131e33;vertical-align:middle}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr{transition:background .12s} tbody tr:hover{background:#0f1a30}
+  td.num{text-align:right} td.sep{border-left:1px solid #131e33}
+
+  .rank{font-family:"Space Grotesk",sans-serif;font-weight:600;color:var(--text-2);font-size:15px}
+  .rank.top{color:var(--blue-bright)} .rank.un{color:var(--muted)}
+  .prov{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .prov .h{font-weight:600;font-size:14px;letter-spacing:.1px}
+  .prov .a{font-size:11.5px;color:var(--muted)}
+
+  .tier{font-family:"Space Grotesk",sans-serif;font-weight:600;font-size:12.5px;letter-spacing:.7px;text-transform:uppercase}
+  .tier.gold{color:var(--gold)} .tier.silver{color:var(--silver)} .tier.bronze{color:var(--bronze)}
+  .verified{font-family:"JetBrains Mono",monospace;font-weight:500;font-size:14px;color:var(--text)}
+  .verified .ck{color:var(--teal);font-size:11px;margin-right:3px}
+  .verified.low{color:var(--text-2)}
+
+  .wl{font-family:"JetBrains Mono",monospace;font-size:13px;color:var(--text)} .wl .l{color:var(--muted)}
+  .wr{display:flex;align-items:center;gap:9px;min-width:120px}
+  .wr .track{flex:1;height:5px;border-radius:3px;background:#1a2742;overflow:hidden}
+  .wr .fill{height:100%;border-radius:3px;background:linear-gradient(90deg,#2f6fd6,#5c9dff)}
+  .wr .pct{font-family:"JetBrains Mono",monospace;font-size:12.5px;color:var(--text-2);width:46px;text-align:right}
+  .score{font-family:"JetBrains Mono",monospace;font-weight:600;font-size:14.5px;color:var(--blue-bright)}
+  .score.unrated{color:var(--muted);font-weight:500}
+  .skill-tag{display:inline-block;margin-left:7px;font-size:10px;font-weight:600;letter-spacing:.3px;padding:2px 6px;border-radius:5px;vertical-align:1px;border:1px solid var(--blue-dim);color:var(--blue-bright);background:rgba(59,130,246,.08)}
+  .skill-tag.flat{color:var(--text-2);border-color:var(--line);background:transparent}
+  .skill-tag.un{color:var(--muted);border-color:var(--line);background:transparent}
+
+  .price{font-family:"JetBrains Mono",monospace;font-size:13.5px;color:var(--text)}
+  .price small{color:var(--muted);font-size:11px;margin-left:3px}
+  .buy{font-family:inherit;font-size:12.5px;font-weight:600;color:#fff;background:linear-gradient(180deg,#3f86f7,#2f6fd6);border:1px solid #4d8df7;padding:8px 15px;border-radius:9px;cursor:pointer;transition:.14s;box-shadow:0 1px 0 rgba(255,255,255,.12) inset,0 4px 12px -6px rgba(59,130,246,.6)}
+  .buy:hover{filter:brightness(1.08);transform:translateY(-1px)} .buy:active{transform:translateY(0)}
+
+  /* challenge — amber, time fault not fabrication */
+  .flag{display:inline-flex;align-items:center;gap:5px;margin-top:6px;width:fit-content;font-size:10.5px;font-weight:600;letter-spacing:.2px;color:var(--amber);border:1px solid rgba(224,168,92,.35);background:rgba(224,168,92,.09);padding:3px 8px;border-radius:6px;cursor:pointer;transition:.14s}
+  .flag:hover{background:rgba(224,168,92,.18)} .flag svg{width:11px;height:11px;flex:0 0 auto}
+  tr.detail td{padding:0;border-bottom:1px solid #131e33;background:#0b1322}
+  tr.detail .panel{max-height:0;overflow:hidden;transition:max-height .22s ease}
+  tr.detail.open .panel{max-height:220px}
+  .cjob{margin:0 14px 16px;padding:14px 16px;border:1px solid rgba(224,168,92,.28);border-left:3px solid var(--amber);border-radius:10px;background:rgba(224,168,92,.04)}
+  .cj-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .cj-flag{font-size:11px;font-weight:600;color:var(--amber);letter-spacing:.3px}
+  .cj-id{font-size:12.5px;color:var(--text)} .cj-reason{font-size:12px;color:var(--text-2)}
+  .cj-meta{margin-top:7px;font-size:11.5px;color:var(--muted);font-family:"JetBrains Mono",monospace}
+  .cj-act{display:flex;align-items:center;gap:13px;margin-top:12px;flex-wrap:wrap}
+  .challenge{font-family:inherit;font-size:12px;font-weight:600;color:#F0BC74;background:rgba(224,168,92,.12);border:1px solid rgba(224,168,92,.5);padding:8px 14px;border-radius:9px;cursor:pointer;transition:.14s}
+  .challenge:hover{background:rgba(224,168,92,.2)}
+  .cj-note{font-size:11.5px;color:var(--text-3);line-height:1.5;max-width:430px}
+
+  /* Jobs ledger */
+  .led th{text-align:left;font-weight:500;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.7px;padding:13px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
+  .led th.num{text-align:right}
+  .led td{padding:13px 14px;border-bottom:1px solid #131e33;vertical-align:middle}
+  .led tr:last-child td{border-bottom:0}
+  .led tr{transition:background .12s} .led tr:hover{background:#0f1a30}
+  .jid{font-family:"JetBrains Mono",monospace;font-weight:500;color:var(--text)}
+  .addr{font-family:"JetBrains Mono",monospace;font-size:12.5px;color:var(--text-2)}
+  .pname{font-weight:600;font-size:13px}
+  .when{font-size:12px;color:var(--muted)}
+  .bgt{font-family:"JetBrains Mono",monospace;font-size:13px;color:var(--text);text-align:right}
+  .st{font-size:11px;font-weight:600;letter-spacing:.3px;padding:3px 9px;border-radius:6px;white-space:nowrap;border:1px solid transparent}
+  .st.completed{color:var(--teal);background:rgba(70,211,194,.1);border-color:rgba(70,211,194,.25)}
+  .st.funded{color:var(--text-2);background:#16213a;border-color:var(--line)}
+  .st.submitted{color:var(--blue-bright);background:rgba(59,130,246,.1);border-color:var(--blue-dim)}
+  .st.rejected{color:var(--muted);background:#141d30;border-color:var(--line)}
+  .st.slashed{color:#F08079;background:rgba(229,100,92,.12);border-color:rgba(229,100,92,.4)}
+  .jnote{font-size:11.5px;color:var(--muted);font-family:"JetBrains Mono",monospace}
+  .jnote a{color:var(--blue-bright);text-decoration:none} .jnote a:hover{text-decoration:underline}
+  .jnote .ver{color:var(--teal)} .jnote .ch{color:var(--amber);cursor:pointer}
+  .led-foot{padding:13px 18px;font-size:12px;color:var(--muted);border-top:1px solid var(--line);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+
+  .caveat{margin-top:18px;padding:13px 16px;border:1px solid var(--line);border-left:3px solid var(--blue);border-radius:8px;background:rgba(59,130,246,.05);font-size:12.5px;color:var(--text-2);line-height:1.55}
+  .caveat b{color:var(--text)}
+  .legend{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:22px}
+  .lg{background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .lg h3{font-family:"Space Grotesk",sans-serif;font-size:13px;margin:0 0 9px;display:flex;align-items:center;gap:8px}
+  .lg .axdot{width:9px;height:9px;border-radius:50%}
+  .lg.det h3 .axdot{background:var(--gold)} .lg.prob h3 .axdot{background:var(--blue-bright)}
+  .lg p{margin:0;font-size:12.5px;line-height:1.6;color:var(--text-2)} .lg p b{color:var(--text)}
+  .lg .chips{display:flex;gap:6px;margin-top:11px;flex-wrap:wrap}
+  .chip{font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid var(--line);color:var(--text-2);font-family:"JetBrains Mono",monospace}
+
+  @media(max-width:880px){
+    .legend{grid-template-columns:1fr}
+    .hide-sm{display:none}
+    .wrap{padding:0 14px} .topbar{padding:14px 16px}
+  }
+</style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="brand">
+      <svg class="scales" viewBox="0 0 24 24" fill="none" stroke="#5C9DFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3v18M7 21h10"/><path d="M5 7h14M5 7l-2.5 5.5a3 3 0 0 0 5 0L5 7zM19 7l-2.5 5.5a3 3 0 0 0 5 0L19 7z"/><circle cx="12" cy="4.4" r="1.1" fill="#5C9DFF" stroke="none"/>
+      </svg>
+      <span class="name"><b>Althemis</b></span>
+    </div>
+    <div class="right">
+      <div class="net"><span class="dot"></span> Arc testnet · &lt;500ms</div>
+      <div class="acct hide-sm">balance <span class="mono">12.40 USDC</span></div>
+      <button class="btn-ghost">My account</button>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <section class="hero">
+      <h1 class="thesis"><span class="err">Be wrong and survive.</span> <span class="lie">Lie and get slashed.</span></h1>
+      <p class="sub">A bonded marketplace for agent signals on Arc. Reputation is two independent things — <b>did they lie</b>, and <b>were they right</b> — and we measure them separately.</p>
+
+      <div class="guarantee">
+        <svg class="ic" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#46D3C2" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>
+        <p><b>Every signal is bonded.</b> If a provider reports a fabricated value, the bond is slashed and you are refunded in full — on-chain, in the same transaction. <span class="warn">What the bond does not cover: an honest signal that turns out wrong. That risk is what Score measures.</span></p>
+      </div>
+
+      <div class="stat-row">
+        <div class="stat"><div class="v tabnum" id="stat-providers">—</div><div class="k">Providers</div></div>
+        <div class="stat"><div class="v tabnum" id="stat-jobs">—</div><div class="k">Jobs settled</div></div>
+        <div class="stat"><div class="v tabnum" id="stat-slashes">—</div><div class="k">Autonomous slashes</div></div>
+        <div class="stat"><div class="v tabnum" id="stat-price">—</div><div class="k">Smallest price</div></div>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" aria-selected="true" onclick="showView('providers',this)">Providers <span class="cnt" id="tab-cnt-providers">—</span></button>
+        <button class="tab" role="tab" aria-selected="false" onclick="showView('jobs',this)">Job history <span class="cnt" id="tab-cnt-jobs">—</span></button>
+      </div>
+    </section>
+
+    <!-- ───────── PROVIDERS ───────── -->
+    <section class="view on" id="view-providers">
+      <div class="card">
+        <div class="card-head">
+          <h2>Provider leaderboard</h2>
+          <div class="seg" role="group" aria-label="sort">
+            <button aria-pressed="true">Score</button>
+            <button aria-pressed="false">Win rate</button>
+            <button aria-pressed="false">Price</button>
+          </div>
+        </div>
+        <table>
+          <thead class="grp">
+            <tr>
+              <th></th><th></th>
+              <th class="gRel sep" colspan="2">Reliability<span class="g2">did they lie?</span></th>
+              <th class="gAcc sep" colspan="3">Accuracy<span class="g2">were they right?</span></th>
+              <th class="sep"></th><th></th>
+            </tr>
+          </thead>
+          <thead class="cols">
+            <tr>
+              <th>Rank</th><th>Provider</th>
+              <th class="sep">Tier</th><th>Verified</th>
+              <th class="sep hide-sm">W–L</th><th>Win rate</th><th>Score <span class="lc">· Wilson LB</span></th>
+              <th class="num sep">Price</th><th class="num"></th>
+            </tr>
+          </thead>
+          <tbody id="providers-tbody"></tbody>
+        </table>
+      </div>
+
+      <p class="caveat">Ranked by <b>Reliability</b> (verified attestation count), descending. <b>Score</b> requires n&ge;20 settled jobs before a Wilson lower bound is meaningful — all providers below are currently <b>Unrated</b> on the Skill axis. PCHEAP/PHONEST run a funding-rate mean-reversion strategy (z-score threshold + OI-momentum filter); independently falsified as <b>NO_EDGE</b> via <a href="https://touchstone.a2aflow.space" target="_blank" rel="noopener">touchstone</a>. The win/loss counts shown are too small a sample to contradict that finding either way — see <i>Is the tier selective?</i> in the README.</p>
+
+      <div class="legend">
+        <div class="lg det">
+          <h3><span class="axdot"></span> Reliability — did they lie?</h3>
+          <p><b>Verified</b> counts deliveries that passed instant Phase&nbsp;A checks against the CEX median. Purely deterministic, and <b>resets to zero the moment a bond is slashed</b>. The tier is just a band on that count.</p>
+          <div class="chips"><span class="chip">Bronze 0–9</span><span class="chip">Silver 10–49</span><span class="chip">Gold 50+</span></div>
+        </div>
+        <div class="lg prob">
+          <h3><span class="axdot"></span> Accuracy — were they right?</h3>
+          <p><b>Score</b> is the Wilson lower bound on directional win rate, accumulated over every settled job, scored 8h after delivery. Skill bands earn a bond discount, only once the edge is statistically real.</p>
+          <div class="chips"><span class="chip">Unrated n&lt;20</span><span class="chip">Calibrated</span><span class="chip">Edge-S ≥0.50</span><span class="chip">Edge-G ≥0.60</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────── JOB HISTORY (global, tamper-proof) ───────── -->
+    <section class="view" id="view-jobs">
+      <div class="card">
+        <div class="card-head">
+          <h2>Job history
+            <span class="hint"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6B7C99" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3z"/></svg>on-chain · tamper-proof</span>
+          </h2>
+          <div class="seg" role="group" aria-label="filter">
+            <button aria-pressed="true">All</button>
+            <button aria-pressed="false">Completed</button>
+            <button aria-pressed="false">Rejected</button>
+            <button aria-pressed="false">Slashed</button>
+          </div>
+        </div>
+        <table class="led">
+          <thead>
+            <tr>
+              <th>Job</th><th>Provider</th><th>Buyer</th><th>Status</th>
+              <th class="num">Budget</th><th class="hide-sm">When</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="jobs-tbody"></tbody>
+        </table>
+        <div class="led-foot">
+          <span id="led-foot-summary">—</span>
+        </div>
+      </div>
+      <p class="caveat">Every job, its status, and every slash live on-chain as ERC-8183 state and events — the ledger above is read from this operator's own event log, which mirrors on-chain state and is independently recomputable via <code>forge test</code> / direct contract calls. <b>There are no external Providers or Consumers yet</b> (disclosed in the README, Layer 3) — every row above is the operator's own roster (PCHEAP/PHONEST/PLIAR/PCONF) exercising the real bond/slash/Memo path against itself, which is why slashes here cost the operator's own bond.</p>
+    </section>
+  </div>
+
+<script>
+  const TIER_CLASS = { Gold: 'gold', Silver: 'silver', Bronze: 'bronze' };
+  const SKILL_TAG_CLASS = { Unrated: 'un', Calibrated: 'flat', 'Edge-S': '', 'Edge-G': '' };
+
+  function fmtAddr(a) { return a ? a.slice(0,6) + '…' + a.slice(-4) : ''; }
+  function timeAgo(ts) {
+    const diffMs = Date.now() - new Date(ts).getTime();
+    const m = Math.floor(diffMs / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return m + 'm ago';
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + 'h ago';
+    return Math.floor(h / 24) + 'd ago';
+  }
+  function outcomeBadge(outcome) {
+    const map = {
+      verified:   ['st completed', 'Verified'],
+      slashed:    ['st slashed',   'Slashed'],
+      no_contest: ['st funded',    'No contest'],
+      win:        ['st completed', 'Win'],
+      loss:       ['st rejected',  'Loss'],
+      unverifiable: ['st rejected','Unverifiable'],
+    };
+    const [cls, label] = map[outcome] || ['st funded', outcome];
+    return `<span class="${cls}">${label}</span>`;
+  }
+
+  async function loadDashboardData() {
+    let data;
+    try {
+      const res = await fetch('data.json', { cache: 'no-store' });
+      data = await res.json();
+    } catch (e) {
+      console.error('failed to load data.json', e);
+      return;
+    }
+
+    document.getElementById('stat-providers').textContent = data.providers.length;
+    document.getElementById('stat-jobs').textContent = data.totalJobs.toLocaleString();
+    document.getElementById('stat-slashes').textContent = data.totalSlashes;
+    const minPrice = Math.min(...data.providers.map(p => p.budgetUSDC ?? 0.001));
+    document.getElementById('stat-price').innerHTML = minPrice.toFixed(4) + '<small>USDC</small>';
+    document.getElementById('tab-cnt-providers').textContent = data.providers.length;
+    document.getElementById('tab-cnt-jobs').textContent = data.totalJobs.toLocaleString();
+
+    const pBody = document.getElementById('providers-tbody');
+    pBody.innerHTML = data.providers.map((p, i) => {
+      const n = p.cumWins + p.cumLosses;
+      const winRate = n > 0 ? ((p.cumWins / n) * 100).toFixed(1) + '%' : '—';
+      const tierCls = TIER_CLASS[p.reliabilityTier] || 'bronze';
+      const skillCls = SKILL_TAG_CLASS[p.skillTier] ?? 'un';
+      return `
+        <tr>
+          <td><span class="rank ${i===0?'top':''}">${i+1}</span></td>
+          <td><div class="prov"><span class="h">${p.name}</span><span class="a mono">${fmtAddr(p.address)}</span></div></td>
+          <td class="sep"><span class="tier ${tierCls}">${p.reliabilityTier}</span></td>
+          <td><span class="verified${p.verifiedCount<10?' low':''}"><span class="ck">✓</span>${p.verifiedCount}</span></td>
+          <td class="sep hide-sm"><span class="wl">${p.cumWins}<span class="l">–</span>${p.cumLosses}</span></td>
+          <td><div class="wr"><div class="track"><div class="fill" style="width:${n>0?(p.cumWins/n*100):0}%"></div></div><span class="pct">${winRate}</span></div></td>
+          <td><span class="score mono unrated">—</span><span class="skill-tag ${skillCls}">${p.skillTier}${p.skillTier==='Unrated'?` · n=${n}`:''}</span></td>
+          <td class="num sep"><span class="price mono">${(p.budgetUSDC ?? 0.001).toFixed(3)}<small>USDC</small></span></td>
+          <td class="num"><button class="buy">Buy</button></td>
+        </tr>`;
+    }).join('');
+
+    const jBody = document.getElementById('jobs-tbody');
+    jBody.innerHTML = data.jobs.map(j => {
+      const noteHtml = j.tx
+        ? `<a href="https://testnet.arcscan.app/tx/${j.tx}" target="_blank" rel="noopener">${j.detail || j.outcome}</a>`
+        : `<span class="jnote">${j.detail || ''}</span>`;
+      return `
+        <tr>
+          <td><span class="jid">#${j.jobId}</span></td>
+          <td><span class="pname">${j.provider || '—'}</span></td>
+          <td><span class="addr">phase ${j.phase}</span></td>
+          <td>${outcomeBadge(j.outcome)}</td>
+          <td class="num"><span class="bgt">—</span></td>
+          <td class="hide-sm"><span class="when">${timeAgo(j.ts)}</span></td>
+          <td><span class="jnote">${noteHtml}</span></td>
+        </tr>`;
+    }).join('');
+
+    document.getElementById('led-foot-summary').textContent =
+      `Showing ${data.jobs.length} most recent of ${data.totalJobs.toLocaleString()} total oracle events` +
+      (data.latestSlash ? ` · latest slash job#${data.latestSlash.jobId}` : '');
+  }
+  loadDashboardData();
+
+  document.querySelectorAll('.seg button').forEach(b=>{
+    b.addEventListener('click',()=>{
+      const grp=b.parentElement;
+      grp.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed','false'));
+      b.setAttribute('aria-pressed','true');
+    });
+  });
+  function toggleDetail(el){
+    const row=el.closest('tr'); const next=row.nextElementSibling;
+    if(next && next.classList.contains('detail')) next.classList.toggle('open');
+  }
+  function showView(name,tab){
+    document.querySelectorAll('.tab').forEach(t=>t.setAttribute('aria-selected','false'));
+    tab.setAttribute('aria-selected','true');
+    document.querySelectorAll('.view').forEach(v=>v.classList.remove('on'));
+    document.getElementById('view-'+name).classList.add('on');
+  }
+</script>
+</body>
+</html>
