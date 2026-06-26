@@ -150,14 +150,20 @@ async function tickChallenger() {
     return;
   }
   for (const job of candidates) {
+    let budget;
     try {
-      const budget = await getJobBudget(job.jobId);
-      const stake  = budget / 10n;
-      console.log(`[challenger] XCHAL challenging job # (stake=)`);
-      const hash = await challengeJob(roster.XCHAL.client, job.jobId, stake);
-      console.log(`[challenger] job # challenge tx=`);
+      budget = await getJobBudget(job.jobId);
     } catch (e) {
-      console.error(`[challenger] job # challenge failed: `);
+      console.log(`[challenger] job #${job.jobId} — budget unreadable (settled/stale), skip`);
+      continue;
+    }
+    try {
+      const stake = budget / 10n;
+      console.log(`[challenger] XCHAL challenging job #${job.jobId} (stake=${stake})`);
+      const hash = await challengeJob(roster.XCHAL.client, job.jobId, stake);
+      console.log(`[challenger] job #${job.jobId} challenge tx=${hash}`);
+    } catch (e) {
+      console.error(`[challenger] job #${job.jobId} challenge failed: ${(e&&e.shortMessage)||(e&&e.message)||String(e)}`);
     }
   }
 }
