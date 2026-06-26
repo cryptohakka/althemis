@@ -42,7 +42,7 @@ const providers = Object.values(tiers as Record<string, any>)
   })
   .sort((a, b) => b.verifiedCount - a.verifiedCount);
 
-const RECENT_N = 20;
+const RECENT_N = 200;
 const recentEvents = events.slice(-RECENT_N).reverse();
 
 const jobs = [];

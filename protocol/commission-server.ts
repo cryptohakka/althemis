@@ -168,6 +168,64 @@ app.post(
   },
 );
 
+/**
+ * /fund-buyer — デモ用資金補給エンドポイント。
+ * ブラウザで生成された ephemeral buyer wallet に、x402決済1回分の
+ * gas(ETH)+USDC を FUNDER から送る。FUNDER の秘密鍵はサーバー内に
+ * 留まり、フロントには一切渡らない。
+ *
+ * 雑な乱用防止: 同一プロセス内でメモリのみの簡易レート制限
+ * (同一アドレスへの再補給を60秒間ブロック)。本番運用は想定しない
+ * デモ専用エンドポイントであることが前提。
+ */
+const fundedRecently = new Map<string, number>();
+const FUND_COOLDOWN_MS = 60_000;
+const FUND_GAS_ETH = '0.01';
+const FUND_USDC = '1';
+
+if (!process.env.FUNDER_PRIVATE_KEY) throw new Error('FUNDER_PRIVATE_KEY not set in .env');
+const funder = makeWalletClient(process.env.FUNDER_PRIVATE_KEY as `0x${string}`);
+
+app.post('/fund-buyer', async (req: Request, res: Response) => {
+  try {
+    const address = (req.body?.address ?? '') as string;
+    if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+      return res.status(400).json({ error: 'invalid address' });
+    }
+
+    const last = fundedRecently.get(address);
+    if (last && Date.now() - last < FUND_COOLDOWN_MS) {
+      return res.status(429).json({ error: 'already funded recently, retry later' });
+    }
+    fundedRecently.set(address, Date.now());
+
+    console.log(`[fund-buyer] funding ${address} with ${FUND_GAS_ETH} gas + ${FUND_USDC} USDC...`);
+
+    const { parseEther } = await import('viem');
+    const { erc20Abi } = await import('viem');
+
+    const gasTx = await funder.sendTransaction({
+      to: address as `0x${string}`,
+      value: parseEther(FUND_GAS_ETH),
+    });
+    await pub.waitForTransactionReceipt({ hash: gasTx });
+
+    const usdcTx = await funder.writeContract({
+      address: USDC_ADDRESS,
+      abi: erc20Abi,
+      functionName: 'transfer',
+      args: [address as `0x${string}`, parseUnits(FUND_USDC, dec)],
+    });
+    await pub.waitForTransactionReceipt({ hash: usdcTx });
+
+    console.log(`[fund-buyer] funded ${address}: gas=${gasTx} usdc=${usdcTx}`);
+    res.json({ ok: true, gasTx, usdcTx });
+  } catch (e: any) {
+    console.error('[fund-buyer] failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`[pconf] Althemis commissioning server on http://localhost:${PORT}`);
   console.log(`   POST /commission-signal/open         (${PRICE_OPEN})`);

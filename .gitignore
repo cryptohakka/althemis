@@ -20,3 +20,5 @@ logs/
 data/tiers.json.bak.*
 .bak/
 public/data.json
+
+public/gateway-bundle.js

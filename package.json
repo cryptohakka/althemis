@@ -9,7 +9,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "oracle": "tsx protocol/oracle.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:gateway": "esbuild browser-src/gateway-entry.ts --bundle --platform=browser --format=iife --target=es2020 --alias:crypto=./browser-src/crypto-shim.ts --banner:js=\"$(cat browser-src/buffer-banner.js)\" --outfile=public/gateway-bundle.js --define:global=globalThis --log-level=warning"
   },
   "keywords": [],
   "author": "",
@@ -28,6 +29,7 @@
     "viem": "^2.52.2"
   },
   "devDependencies": {
-    "@types/express": "^5.0.6"
+    "@types/express": "^5.0.6",
+    "esbuild": "^0.28.1"
   }
 }

@@ -220,9 +220,9 @@
         <div class="card-head">
           <h2>Provider leaderboard</h2>
           <div class="seg" role="group" aria-label="sort">
-            <button aria-pressed="true">Score</button>
-            <button aria-pressed="false">Win rate</button>
-            <button aria-pressed="false">Price</button>
+            <button aria-pressed="true" data-sort="score">Score</button>
+            <button aria-pressed="false" data-sort="winrate">Win rate</button>
+            <button aria-pressed="false" data-sort="price">Price</button>
           </div>
         </div>
         <table>
@@ -270,10 +270,10 @@
             <span class="hint"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6B7C99" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3z"/></svg>on-chain · tamper-proof</span>
           </h2>
           <div class="seg" role="group" aria-label="filter">
-            <button aria-pressed="true">All</button>
-            <button aria-pressed="false">Completed</button>
-            <button aria-pressed="false">Rejected</button>
-            <button aria-pressed="false">Slashed</button>
+            <button aria-pressed="true" data-filter="all">All</button>
+            <button aria-pressed="false" data-filter="completed">Completed</button>
+            <button aria-pressed="false" data-filter="rejected">Rejected</button>
+            <button aria-pressed="false" data-filter="slashed">Slashed</button>
           </div>
         </div>
         <table class="led">
@@ -338,8 +338,17 @@
     document.getElementById('tab-cnt-providers').textContent = data.providers.length;
     document.getElementById('tab-cnt-jobs').textContent = data.totalJobs.toLocaleString();
 
+    window.__althemisData = data;
+    renderProviderRows(data.providers);
+    renderJobRows(data.jobs);
+    document.getElementById('led-foot-summary').textContent =
+      `Showing ${data.jobs.length} most recent of ${data.totalJobs.toLocaleString()} total oracle events` +
+      (data.latestSlash ? ` · latest slash job#${data.latestSlash.jobId}` : '');
+  }
+
+  function renderProviderRows(providers) {
     const pBody = document.getElementById('providers-tbody');
-    pBody.innerHTML = data.providers.map((p, i) => {
+    pBody.innerHTML = providers.map((p, i) => {
       const n = p.cumWins + p.cumLosses;
       const winRate = n > 0 ? ((p.cumWins / n) * 100).toFixed(1) + '%' : '—';
       const tierCls = TIER_CLASS[p.reliabilityTier] || 'bronze';
@@ -354,12 +363,18 @@
           <td><div class="wr"><div class="track"><div class="fill" style="width:${n>0?(p.cumWins/n*100):0}%"></div></div><span class="pct">${winRate}</span></div></td>
           <td><span class="score mono unrated">—</span><span class="skill-tag ${skillCls}">${p.skillTier}${p.skillTier==='Unrated'?` · n=${n}`:''}</span></td>
           <td class="num sep"><span class="price mono">${(p.budgetUSDC ?? 0.001).toFixed(3)}<small>USDC</small></span></td>
-          <td class="num"><button class="buy">Buy</button></td>
+          <td class="num"><button class="buy" onclick="__handleBuyClick('open')">Buy</button></td>
         </tr>`;
     }).join('');
+  }
 
+  function renderJobRows(jobs) {
     const jBody = document.getElementById('jobs-tbody');
-    jBody.innerHTML = data.jobs.map(j => {
+    if (jobs.length === 0) {
+      jBody.innerHTML = '<tr><td colspan="7" style="text-align:center;opacity:.6;padding:24px">No jobs match this filter</td></tr>';
+      return;
+    }
+    jBody.innerHTML = jobs.map(j => {
       const noteHtml = j.tx
         ? `<a href="https://testnet.arcscan.app/tx/${j.tx}" target="_blank" rel="noopener">${j.detail || j.outcome}</a>`
         : `<span class="jnote">${j.detail || ''}</span>`;
@@ -374,17 +389,128 @@
           <td><span class="jnote">${noteHtml}</span></td>
         </tr>`;
     }).join('');
-
-    document.getElementById('led-foot-summary').textContent =
-      `Showing ${data.jobs.length} most recent of ${data.totalJobs.toLocaleString()} total oracle events` +
-      (data.latestSlash ? ` · latest slash job#${data.latestSlash.jobId}` : '');
   }
   loadDashboardData();
 
-  document.querySelectorAll('.seg button').forEach(b=>{
-    b.addEventListener('click',()=>{
+  // ---- sort / filter state, applied on top of the data.json render above ----
+  const segState = { sort: 'score', filter: 'all' };
+
+  function applySort(providers) {
+    const list = providers.slice();
+    if (segState.sort === 'score') {
+      list.sort((a, b) => b.verifiedCount - a.verifiedCount);
+    } else if (segState.sort === 'winrate') {
+      list.sort((a, b) => {
+        const an = a.cumWins + a.cumLosses, bn = b.cumWins + b.cumLosses;
+        const aw = an > 0 ? a.cumWins / an : -1;
+        const bw = bn > 0 ? b.cumWins / bn : -1;
+        return bw - aw;
+      });
+    } else if (segState.sort === 'price') {
+      list.sort((a, b) => (a.budgetUSDC || 0.001) - (b.budgetUSDC || 0.001));
+    }
+    return list;
+  }
+
+  function applyFilter(jobs) {
+    if (segState.filter === 'all') return jobs;
+    if (segState.filter === 'completed') return jobs.filter(j => j.outcome === 'verified' || j.outcome === 'win' || j.outcome === 'no_contest');
+    if (segState.filter === 'rejected') return jobs.filter(j => j.outcome === 'loss' || j.outcome === 'unverifiable');
+    if (segState.filter === 'slashed') return jobs.filter(j => j.outcome === 'slashed');
+    return jobs;
+  }
+
+  function rerenderProviders() {
+    if (!window.__althemisData) return;
+    renderProviderRows(applySort(window.__althemisData.providers));
+  }
+
+  function rerenderJobs() {
+    if (!window.__althemisData) return;
+    renderJobRows(applyFilter(window.__althemisData.jobs));
+  }
+
+  document.querySelectorAll('.seg[aria-label="sort"] button').forEach(function(b) {
+    b.addEventListener('click', function() {
+      const grp = b.parentElement;
+      grp.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', 'false'));
+      b.setAttribute('aria-pressed', 'true');
+      segState.sort = b.dataset.sort;
+      rerenderProviders();
+    });
+  });
+
+  document.querySelectorAll('.seg[aria-label="filter"] button').forEach(function(b) {
+    b.addEventListener('click', function() {
+      const grp = b.parentElement;
+      grp.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', 'false'));
+      b.setAttribute('aria-pressed', 'true');
+      segState.filter = b.dataset.filter;
+      rerenderJobs();
+    });
+  });
+
+  // ---- Buy flow modal wiring (DOM is appended after the closing script tag, so defer) ----
+  let modalBackdrop, modalTitle, modalBody;
+  document.addEventListener('DOMContentLoaded', function() {
+    modalBackdrop = document.getElementById('buy-modal-backdrop');
+    modalTitle = document.getElementById('buy-modal-title');
+    modalBody = document.getElementById('buy-modal-body');
+    const closeBtn = document.getElementById('buy-modal-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', function() {
+        modalBackdrop.style.display = 'none';
+      });
+    }
+  });
+
+  const STEP_LABELS = {
+    generating: 'Generating ephemeral buyer wallet',
+    funding: 'Requesting gas + USDC top-up',
+    depositing: 'Depositing to Circle Gateway',
+    waiting_balance: 'Waiting for Gateway balance',
+    paying: 'Paying via x402 (Gateway settle)',
+    done: 'Done'
+  };
+  const STEP_ORDER = ['generating', 'funding', 'depositing', 'waiting_balance', 'paying', 'done'];
+
+  function renderModalSteps(currentStep, detail) {
+    modalBody.innerHTML = STEP_ORDER.map(function(s) {
+      const idx = STEP_ORDER.indexOf(s);
+      const curIdx = STEP_ORDER.indexOf(currentStep);
+      const cls = idx < curIdx ? 'done' : (idx === curIdx ? 'active' : '');
+      return '<div class="buy-step ' + cls + '"><span class="dot"></span><span>' + STEP_LABELS[s] + '</span></div>';
+    }).join('') + (detail ? '<div style="margin-top:8px;opacity:.7;font-size:11.5px">' + detail + '</div>' : '');
+  }
+
+  async function handleBuyClick(tier) {
+    modalBackdrop.style.display = 'flex';
+    modalTitle.textContent = tier === 'open' ? 'Commissioning open-tier signal...' : 'Commissioning confidential-tier signal...';
+    renderModalSteps('generating', '');
+    try {
+      const result = await window.AlthemisBuy.runBuyFlow(tier, function(p) {
+        renderModalSteps(p.step, p.detail ? ('wallet: ' + p.detail) : '');
+      });
+      modalTitle.textContent = 'Job commissioned';
+      modalBody.innerHTML =
+        '<div class="buy-step done"><span class="dot"></span><span>Payment settled via x402</span></div>' +
+        '<div class="buy-result">' +
+        'job: <b>#' + result.jobId + '</b><br>' +
+        'tier: <b>' + result.tier + '</b><br>' +
+        'buyer (ephemeral): ' + result.ephemeralAddress + '<br>' +
+        'amount: ' + result.amountUsdc + ' USDC' +
+        '</div>';
+    } catch (e) {
+      modalTitle.textContent = 'Commissioning failed';
+      modalBody.innerHTML = '<div class="buy-error">' + ((e && e.message) || String(e)) + '</div>';
+    }
+  }
+  window.__handleBuyClick = handleBuyClick;
+
+  document.querySelectorAll('.seg button').forEach(function(b){
+    b.addEventListener('click',function(){
       const grp=b.parentElement;
-      grp.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed','false'));
+      grp.querySelectorAll('button').forEach(function(x){x.setAttribute('aria-pressed','false');});
       b.setAttribute('aria-pressed','true');
     });
   });
@@ -399,5 +525,34 @@
     document.getElementById('view-'+name).classList.add('on');
   }
 </script>
+
+<!-- ───────── BUY FLOW MODAL ───────── -->
+<div id="buy-modal-backdrop" class="buy-modal-backdrop" style="display:none">
+  <div class="buy-modal">
+    <div class="buy-modal-head">
+      <span id="buy-modal-title">Commissioning signal…</span>
+      <button id="buy-modal-close" aria-label="close">&times;</button>
+    </div>
+    <div id="buy-modal-body" class="buy-modal-body"></div>
+  </div>
+</div>
+
+<style>
+.buy-modal-backdrop{position:fixed;inset:0;background:rgba(5,8,15,.72);display:flex;align-items:center;justify-content:center;z-index:100;backdrop-filter:blur(4px)}
+.buy-modal{width:min(480px,92vw);background:#0e1422;border:1px solid var(--line);border-radius:14px;box-shadow:0 20px 60px -10px rgba(0,0,0,.6);overflow:hidden}
+.buy-modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line);font-family:"Space Grotesk",sans-serif;font-weight:600;color:var(--text)}
+.buy-modal-head button{background:transparent;border:0;color:var(--text-2);font-size:20px;cursor:pointer;line-height:1;padding:2px 6px}
+.buy-modal-head button:hover{color:var(--text)}
+.buy-modal-body{padding:18px;font-family:"JetBrains Mono",monospace;font-size:13px;color:var(--text-2)}
+.buy-step{display:flex;align-items:center;gap:10px;padding:7px 0}
+.buy-step .dot{width:8px;height:8px;border-radius:50%;background:var(--line);flex-shrink:0}
+.buy-step.active .dot{background:var(--blue-bright);box-shadow:0 0 0 3px rgba(59,130,246,.25)}
+.buy-step.done .dot{background:#46D3C2}
+.buy-step.error .dot{background:#e5484d}
+.buy-result{margin-top:14px;padding:12px;background:#0a0f1a;border:1px solid var(--line);border-radius:9px;word-break:break-all;font-size:12px;line-height:1.6}
+.buy-result a{color:var(--blue-bright)}
+.buy-error{margin-top:14px;padding:12px;background:rgba(229,72,77,.08);border:1px solid rgba(229,72,77,.3);border-radius:9px;color:#f3a8aa;font-size:12.5px}
+</style>
+<script src="gateway-bundle.js?v=2"></script>
 </body>
 </html>
