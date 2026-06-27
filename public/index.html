@@ -100,6 +100,7 @@
   .tier{font-family:"Space Grotesk",sans-serif;font-weight:600;font-size:12.5px;letter-spacing:.7px;text-transform:uppercase}
   .tier.gold{color:var(--gold)} .tier.silver{color:var(--silver)} .tier.bronze{color:var(--bronze)}
   .verified{font-family:"JetBrains Mono",monospace;font-weight:500;font-size:14px;color:var(--text)}
+  .sigtype{display:inline-block;font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:600;letter-spacing:.4px;padding:2px 7px;border-radius:5px;border:1px solid var(--line);color:var(--text-2);background:rgba(255,255,255,.03)}
   .verified .ck{color:var(--teal);font-size:11px;margin-right:3px}
   .verified.low{color:var(--text-2)}
 
@@ -228,7 +229,7 @@
         <table>
           <thead class="grp">
             <tr>
-              <th></th><th></th>
+              <th></th><th></th><th></th>
               <th class="gRel sep" colspan="2">Reliability<span class="g2">did they lie?</span></th>
               <th class="sep"></th>
             </tr>
@@ -236,6 +237,7 @@
           <thead class="cols">
             <tr>
               <th>Rank</th><th>Provider</th>
+              <th>Type</th>
               <th class="sep">Tier</th><th>Verified</th>
               <th class="num sep">Price</th>
             </tr>
@@ -244,7 +246,7 @@
         </table>
       </div>
 
-      <p class="caveat">This is an <b>honest-reporting scoreboard</b>, not a predictive-skill ranking. Ranked by <b>Reliability</b> (verified attestation count), descending — how many deliveries passed instant Phase&nbsp;A fabrication checks against the CEX median, and whether a bond was ever slashed. Althemis deliberately does <b>not</b> rank providers by predictive accuracy: the demo signal (funding-rate mean-reversion) is public data, independently falsified as <b>NO_EDGE</b> via <a href="https://touchstone.a2aflow.space" target="_blank" rel="noopener">touchstone</a>. We slash <b>lies</b> (deterministic, verifiable), never <b>losses</b> (predictions that turn out wrong) — see <i>What is sold</i> in the README.</p>
+      <p class="caveat">This is an <b>honest-reporting scoreboard</b>, not a predictive-skill ranking. Ranked by <b>Reliability</b> (verified attestation count), descending — how many deliveries passed instant Phase&nbsp;A fabrication checks against the CEX median, and whether a bond was ever slashed. Althemis deliberately does <b>not</b> rank providers by predictive accuracy: the demo signal (funding-rate mean-reversion) is public data, independently falsified as <b>NO_EDGE</b> via <a href="https://touchstone.a2aflow.space" target="_blank" rel="noopener">touchstone</a>. We slash <b>lies</b> (deterministic, verifiable), never <b>losses</b> (predictions that turn out wrong). All providers currently report <b>FR</b> (funding rate); OI, regime, and private feeds sit on the roadmap along a reproduction-cost gradient — see <i>What is sold</i> in the README.</p>
 
       <div class="legend">
         <div class="lg det">
@@ -352,6 +354,7 @@
         <tr>
           <td><span class="rank ${i===0?'top':''}">${i+1}</span></td>
           <td><div class="prov"><span class="h">${p.name}${p.commissionType==='confidential'?'<span class="conf-tag">confidential</span>':''}</span><span class="a mono">${fmtAddr(p.address)}</span></div></td>
+          <td><span class="sigtype">${p.signalType ?? 'FR'}</span></td>
           <td class="sep"><span class="tier ${tierCls}">${p.reliabilityTier}</span></td>
           <td><span class="verified${p.verifiedCount<10?' low':''}"><span class="ck">✓</span>${p.verifiedCount}</span></td>
           <td class="num sep"><span class="price mono">${(p.budgetUSDC ?? 0.001).toFixed(3)}<small>USDC</small></span></td>

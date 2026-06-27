@@ -30,6 +30,15 @@ const COMMISSION_TYPE: Record<string, 'open' | 'confidential'> = {
   PLIAR: 'open',
   PCONF: 'confidential',
 };
+// Signal type per provider (registration-time property, like commissionType).
+// All current providers report funding-rate (FR). OI, regime, and private
+// feeds sit on the roadmap along the reproduction-cost gradient — see README.
+const SIGNAL_TYPE: Record<string, 'FR' | 'OI' | 'REGIME'> = {
+  PCHEAP: 'FR',
+  PHONEST: 'FR',
+  PLIAR: 'FR',
+  PCONF: 'FR',
+};
 
 const events = fs.readFileSync('data/events.jsonl', 'utf8')
   .trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
@@ -49,6 +58,7 @@ const providers = Object.values(tiers as Record<string, any>)
       bondRateBps: t.bondRateBps,
       budgetUSDC: BUDGET_BY_NAME[name] ?? 0.001,
       commissionType: COMMISSION_TYPE[name] ?? 'open',
+      signalType: SIGNAL_TYPE[name] ?? 'FR',
     };
   })
   .sort((a, b) => b.verifiedCount - a.verifiedCount);
