@@ -53,13 +53,15 @@ for (const e of recentEvents) {
   // Slashed (and some other terminal) jobs are removed from oracle_state.json
   // once settled — fall back to an on-chain read so the dashboard never shows
   // a blank provider for a real, on-chain-confirmed slash.
-  if (!providerAddr) {
-    try {
-      const job = await getJob(BigInt(e.jobId));
-      providerAddr = job.provider;
-    } catch {
-      providerAddr = null;
-    }
+  let clientAddr = null;
+  // client (buyer) address is never in oracle_state.json, so it always
+  // requires an on-chain getJob read; reuse it for provider fallback too.
+  try {
+    const job = await getJob(BigInt(e.jobId));
+    if (!providerAddr) providerAddr = job.provider;
+    clientAddr = job.client;
+  } catch {
+    if (!providerAddr) providerAddr = null;
   }
 
   jobs.push({
@@ -70,6 +72,7 @@ for (const e of recentEvents) {
     detail: e.detail,
     tx: e.tx ?? null,
     provider: providerAddr ? (ROLE_NAMES[providerAddr] ?? providerAddr) : null,
+    client: clientAddr,
   });
 }
 
