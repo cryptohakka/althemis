@@ -49,7 +49,7 @@ export async function runBuyFlow(
 
   onProgress({ step: "depositing" });
   const gateway = new GatewayClient({ chain: "arcTestnet", privateKey: ephKey });
-  await gateway.deposit("1");
+  await gateway.deposit("0.2");
 
   onProgress({ step: "waiting_balance" });
   let available = 0n;
