@@ -17,7 +17,7 @@ distinction the category has not made: a deterministic lie-axis (slashable)
 separated from a probabilistic error-axis (reputation-only) — enforced by
 falsification discipline against our own signal, not just our competitors'.
 
-**[Demo Video](TODO: demo video link)** · **[Live Dashboard](https://althemis.a2aflow.space)** · **One-command repro:** `forge test --match-path "contracts/test/BondHook.t.sol"` (31/31 passing)
+**[Demo Video](<URL>)** · **[Live Dashboard](https://althemis.a2aflow.space)** · **One-command repro:** `forge test --match-path "contracts/test/BondHook.t.sol"` (31/31 passing)
 
 **Proof:** autonomous slash on Arc Testnet — [`0x021e0422...`](https://testnet.arcscan.app/tx/0x021e0422d5752137eabdf3c1d0d90d93cfb71856216790230bdeb2c8cd44a8a8)
 
