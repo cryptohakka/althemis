@@ -42,7 +42,6 @@ const PORT = parseInt(process.env.PCONF_PORT || '3020');
 // escrow/bond exposure negligible per commissioned job. Adjust via env
 // if real demand warrants a different on-chain stake size.
 const BUDGET_USDC = process.env.PCONF_BUDGET_USDC || '0.001';
-const PRICE_OPEN         = process.env.PCONF_PRICE_OPEN_USD         || '$0.01';
 const PRICE_CONFIDENTIAL = process.env.PCONF_PRICE_CONFIDENTIAL_USD || '$0.05';
 
 if (!process.env.PCONF_PRIVATE_KEY) throw new Error('PCONF_PRIVATE_KEY not set in .env');
