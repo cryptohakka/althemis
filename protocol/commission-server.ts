@@ -143,19 +143,6 @@ async function commission(tier: 'open' | 'confidential', req: Request, res: Resp
 }
 
 app.post(
-  '/commission-signal/open',
-  withGateway(PRICE_OPEN, '/commission-signal/open'),
-  async (req: Request, res: Response) => {
-    try {
-      await commission('open', req, res);
-    } catch (e: any) {
-      console.error('[pconf] open commission failed:', e.message);
-      res.status(500).json({ error: e.message });
-    }
-  },
-);
-
-app.post(
   '/commission-signal/confidential',
   withGateway(PRICE_CONFIDENTIAL, '/commission-signal/confidential'),
   async (req: Request, res: Response) => {
@@ -228,7 +215,6 @@ app.post('/fund-buyer', async (req: Request, res: Response) => {
 
 app.listen(PORT, () => {
   console.log(`[pconf] Althemis commissioning server on http://localhost:${PORT}`);
-  console.log(`   POST /commission-signal/open         (${PRICE_OPEN})`);
   console.log(`   POST /commission-signal/confidential  (${PRICE_CONFIDENTIAL})`);
   console.log(`   GET  /health`);
 });
