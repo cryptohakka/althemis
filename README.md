@@ -23,7 +23,7 @@ falsification discipline against our own signal, not just our competitors'.
 
 **Falsification discipline:** we ran our own funding-rate signal through an external harness and it came back `NO_EDGE` — so no Provider can reach the Skill tier, and the system says so. ([details](#is-the-tier-selective-we-measured-it))
 
-**Built with:** Arc Testnet · USDC · [Circle Gateway Nanopayments (x402)](#dual-tier-signal-commissioning-x402-arccircle-gateway) · Foundry · viem
+**Built with:** Arc Testnet · USDC · [Circle Gateway Nanopayments (x402)](#confidential-signal-commissioning-x402-arccircle-gateway) · Foundry · viem
 
 ---
 
@@ -153,40 +153,39 @@ settlement would reintroduce exactly the conflation Althemis is built to avoid:
 an LLM's contextual judgment call would start to influence a slash decision
 that must remain reproducible and deterministic.
 
-## Dual-Tier Signal Commissioning (x402, Arc/Circle Gateway)
+## Confidential Signal Commissioning (x402, Arc/Circle Gateway)
 
-Bonded signals require bond economics to make sense — at sub-cent prices, the bond yield collapses below operator cost. Althemis prices each tier at the lowest level where slashable honesty remains economically viable (**$0.01 open / $0.05 confidential**), and composes with nano-tier downstream consumers via Gateway batching rather than pricing at the nano-tier itself.
+Every Provider chooses its commissioning type **at registration** — `open` (raw value published on-chain immediately) or `confidential` (only a commit-hash on-chain, raw value under embargo until settlement). A Provider is one or the other; it is a property of the Provider, not a per-request toggle. The autonomous roster (PCHEAP/PHONEST/PLIAR) are open-type Providers driven by the tick loop; **PCONF is the first confidential-type Provider**, commissioned over HTTP via Circle's x402 Gateway batching SDK.
 
-PCONF is a dedicated wallet (never part of the autonomous tick roster) that exposes two paid HTTP endpoints via Circle's x402 Gateway batching SDK:
+Bonded signals require bond economics to make sense — at sub-cent prices, the bond yield collapses below operator cost. Althemis prices the confidential tier at the lowest level where slashable honesty remains economically viable (**$0.05**), and composes with nano-tier downstream consumers via Gateway batching rather than pricing at the nano-tier itself.
 
-- `POST /commission-signal/open` ($0.01) — plaintext on-chain description.
-- `POST /commission-signal/confidential` ($0.05) — on-chain description carries a commit-hash, not the raw value.
+- `POST /commission-signal/confidential` ($0.05) — on-chain description carries a commit-hash, not the raw value; the raw value is revealed to the paying buyer immediately and to the public at Phase B settlement.
 
-**Tier selection changes WHO can see the value, never WHAT the oracle
-punishes.** Both tiers go through the IDENTICAL Phase A fabrication check
-(`max(3×MAD, floor)` against live 6-CEX median) — confidentiality never
-weakens the deterministic punishment layer.
+**Confidentiality changes WHO can see the value, never WHAT the oracle
+punishes.** A confidential job goes through the IDENTICAL Phase A fabrication
+check (`max(3×MAD, floor)` against live 6-CEX median) as any open job —
+confidentiality never weakens the deterministic punishment layer.
 
 **Live verification:**
 ```bash
-$ curl -i -X POST https://althemis.a2aflow.space/commission-signal/open \
+$ curl -i -X POST https://althemis.a2aflow.space/commission-signal/confidential \
     -H 'content-type: application/json' -d '{}'
 
 HTTP/2 402
-payment-required: eyJ4NDAyVmVyc2lvbiI6Mi4uLg==  # x402 challenge: scheme=exact, network=eip155:5042002, amount=10000 ($0.01 USDC)
+payment-required: eyJ4NDAyVmVyc2lvbiI6Mi4uLg==  # x402 challenge: scheme=exact, network=eip155:5042002, amount=50000 ($0.05 USDC)
 content-type: application/json; charset=utf-8
 
 {}
 ```
-Same endpoint at `/commission-signal/confidential` returns a $0.05 challenge instead.
+The 402 carries the x402 payment challenge; resolving it (Circle Gateway deposit → `gateway.pay()`) commissions a confidential job.
 
 <details>
-<summary><b>Confidentiality model, embargo, and on-chain x402 proof</b> — commit-hash internals, why not nano-floor, both-tier settlement txs</summary>
+<summary><b>Confidentiality model, embargo, and on-chain x402 proof</b> — commit-hash internals, why not nano-floor, x402 settlement txs</summary>
 
 
-PCONF is never in `ROSTER_ROLES` / `getActiveRoles` under any `ROLLOUT_PHASE`. For the confidential tier, the raw value is returned to the paying buyer immediately (within the commissioning call itself) and relayed privately to the oracle process via a local file-based side-channel (`confidential-relay.ts`); the on-chain description carries `CONF_<ASSET>_<window>=<hash>`.
+PCONF is never in `ROSTER_ROLES` / `getActiveRoles` under any `ROLLOUT_PHASE`. As a confidential-type Provider, the raw value is returned to the paying buyer immediately (within the commissioning call itself) and relayed privately to the oracle process via a local file-based side-channel (`confidential-relay.ts`); the on-chain description carries `CONF_<ASSET>_<window>=<hash>`.
 
-**Why $0.01 / $0.05, not Lepton's sub-$0.000001 nano-floor:** bonded signals require bond economics to make sense. At sub-cent prices the bond yield collapses below operator cost. Althemis prices at the lowest level where slashable honesty is economically viable — and composes naturally with downstream nano-tier consumers via Gateway batching.
+**Why $0.05, not Lepton's sub-$0.000001 nano-floor:** bonded signals require bond economics to make sense. At sub-cent prices the bond yield collapses below operator cost. Althemis prices at the lowest level where slashable honesty is economically viable — and composes naturally with downstream nano-tier consumers via Gateway batching.
 
 **This is commit-hash confidentiality, not zero-knowledge.** The oracle process (and anyone with filesystem access to the VPS) can always see the raw value. What's hidden is from external third-party observers reading on-chain data only.
 
@@ -194,9 +193,9 @@ PCONF is never in `ROSTER_ROLES` / `getActiveRoles` under any `ROLLOUT_PHASE`. F
 
 **What's real vs what's staged (Plan B, applied to the x402 layer):**
 
-- **L1 (immutable):** both tiers run through the unmodified ERC8183/BondHook contract suite — same job lifecycle, same bond math, same slash path.
+- **L1 (immutable):** open and confidential jobs run through the unmodified ERC8183/BondHook contract suite — same job lifecycle, same bond math, same slash path.
 - **L2 (operator demo harness):** PCONF (provider) and PCONF_CONSUMER (buyer-side EOA) are two separately-funded wallets executing real on-chain transactions — createJob/fundJob signed by PCONF_CONSUMER, setBudget/submitSignal signed by PCONF — avoiding ERC8183's `client == provider` rejection (confirmed via `simulateContract`: the contract reverts on self-dealing with a dedicated custom error) and matching the same consumer/provider split already used by the autonomous CBUYER → PCHEAP path.
-- **L3 (external participants):** **zero independent third parties, disclosed honestly** — but the full x402 payment loop has been exercised end-to-end against both tiers using a real, independently-funded ephemeral buyer EOA (Circle Gateway deposit → `gateway.pay()` → 402 challenge resolved → settlement). Verified on-chain for both tiers:
+- **L3 (external participants):** **zero independent third parties, disclosed honestly** — but the full x402 payment loop has been exercised end-to-end using a real, independently-funded ephemeral buyer EOA (Circle Gateway deposit → `gateway.pay()` → 402 challenge resolved → settlement). Both commissioning types were exercised during development; the marketplace now runs confidential-type commissioning, and both settlement paths are verified on-chain:
 
   | Tier | Job ID | Settle amount | Submit tx |
   |---|---|---|---|
@@ -282,7 +281,7 @@ There are no independent third-party Providers or Consumers on the marketplace t
 - **Protocol layer** (`protocol/` — escrow, oracle, tier, arc): **TypeScript** via `tsx` with `allowJs`, so it interoperates with the existing JS agent layer without a migration.
 - **Agent layer** (`agents/`, `core/`): Node.js — Council debate, calibration, post-mortem modules reused from prior Triple-A systems.
 - **Market data**: 6 CEX public endpoints (no API keys required), median ± MAD aggregation.
-- **Payments / Circle**: Circle Gateway nanopayments via the **x402** batching SDK for dual-tier signal commissioning ($0.01 open / $0.05 confidential); commissioning-to-settlement is indexed on-chain through Arc's native **Transaction Memo** contract (`memoId == jobId`).
+- **Payments / Circle**: Circle Gateway nanopayments via the **x402** batching SDK for confidential signal commissioning ($0.05, commit-hash on-chain); commissioning-to-settlement is indexed on-chain through Arc's native **Transaction Memo** contract (`memoId == jobId`).
 - **State**: `data/tiers.json`, `data/job_state.json`, `data/oracle_state.json`. The oracle discovers work by scanning on-chain job status and persists confirmation windows, so it resumes across restarts without resetting timers.
 
 ## Design lineage
