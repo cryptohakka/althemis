@@ -11,6 +11,7 @@ import {
 } from './protocol/escrow.js';
 import { loadJobState, saveJobState } from './protocol/job-state.js';
 import { getPolicy, getActiveProviders, getActiveRoles } from './protocol/roster.config.js';
+import { tickConditional } from './protocol/conditional-provider.js';
 
 const CYCLE_MS       = parseInt(process.env.CYCLE_INTERVAL_MS || '300000');
 const SUBMIT_NEUTRAL = process.env.SUBMIT_NEUTRAL !== 'false'; // testnet default: true
@@ -198,6 +199,11 @@ async function runCycle() {
     for (const { role } of activeProviders) {
       await tickProvider(role, signals.fr, dec);
     }
+
+    // Conditional contract declaration — independent escrow, independent
+    // wallet usage pattern (reuses CBUYER/PCHEAP), runs after the existing
+    // provider ticks so a nonce issue here can never affect them.
+    await tickConditional(roster, signals.fr, dec);
 
     const activeRoles = getActiveRoles(ROLLOUT_PHASE);
     if (activeRoles.includes('XCHAL')) {

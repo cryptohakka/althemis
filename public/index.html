@@ -213,6 +213,7 @@
       <div class="tabs" role="tablist">
         <button class="tab" role="tab" aria-selected="true" onclick="showView('providers',this)">Providers <span class="cnt" id="tab-cnt-providers">—</span></button>
         <button class="tab" role="tab" aria-selected="false" onclick="showView('jobs',this)">Job history <span class="cnt" id="tab-cnt-jobs">—</span></button>
+        <button class="tab" role="tab" aria-selected="false" onclick="showView('conditional',this)">Conditional contracts <span class="cnt" id="tab-cnt-conditional">—</span></button>
       </div>
     </section>
 
@@ -286,6 +287,28 @@
       </div>
       <p class="caveat">Every job, its status, and every slash live on-chain as ERC-8183 state and events — the ledger above is read from this operator's own event log, which mirrors on-chain state and is independently recomputable via <code>forge test</code> / direct contract calls. <b>There are no external Providers or Consumers yet</b> (disclosed in the README, Layer 3) — every row above is the operator's own roster (PCHEAP/PHONEST/PLIAR/PCONF) exercising the real bond/slash/Memo path against itself, which is why slashes here cost the operator's own bond.</p>
     </section>
+    <section class="view" id="view-conditional">
+      <div class="card">
+        <div class="card-head">
+          <h2>Conditional contracts
+            <span class="hint"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6B7C99" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3z"/></svg>predictions sold as contracts, not graded forecasts</span>
+          </h2>
+        </div>
+        <table class="led">
+          <thead>
+            <tr>
+              <th>Provider</th><th>Asset</th><th>Window</th><th>Condition</th>
+              <th class="num">Price</th><th>Deadline</th><th>Outcome</th>
+            </tr>
+          </thead>
+          <tbody id="conditional-tbody"></tbody>
+        </table>
+        <div class="led-foot">
+          <span id="conditional-foot-summary">—</span>
+        </div>
+      </div>
+      <p class="caveat">A Provider declares a verifiable, measurable condition (e.g. "BTC funding rate ≤ X within 8h") and the Consumer escrows payment. At the deadline, anyone can settle: the realized value is read from public data, and the contract either releases payment to the Provider (condition met) or refunds the Consumer (condition not met) — deterministically, with no grading of predictive skill. This is the successor to a probabilistic Phase B we built, measured, and retired: see <i>What is sold</i> in the README. Settlement runs on <code>ConditionalEscrow</code>, a contract independent of BondHook — a fabricated <b>fact</b> is still slashed within minutes elsewhere on this dashboard; a missed <b>condition</b> here is simply refunded at the deadline.</p>
+    </section>
   </div>
 
 <script>
@@ -337,10 +360,12 @@
     document.getElementById('stat-price').innerHTML = minPrice.toFixed(4) + '<small>USDC</small>';
     document.getElementById('tab-cnt-providers').textContent = data.providers.length;
     document.getElementById('tab-cnt-jobs').textContent = data.totalJobs.toLocaleString();
+    document.getElementById('tab-cnt-conditional').textContent = (data.conditionalJobs || []).length;
 
     window.__althemisData = data;
     renderProviderRows(data.providers);
     renderJobRows(data.jobs);
+    renderConditionalRows(data.conditionalJobs);
     document.getElementById('led-foot-summary').textContent =
       `Showing ${data.jobs.length} most recent of ${data.totalJobs.toLocaleString()} total oracle events` +
       (data.latestSlash ? ` · latest slash job#${data.latestSlash.jobId}` : '');
@@ -392,6 +417,44 @@
         </tr>`;
     }).join('');
   }
+  function conditionalOutcomeBadge(outcome) {
+    if (outcome === 'released') return '<span class="badge done">Released</span>';
+    if (outcome === 'refunded') return '<span class="badge rej">Refunded</span>';
+    return '<span class="badge verifying">Pending</span>';
+  }
+  function fmtFR(fixed) {
+    if (fixed === null || fixed === undefined) return '—';
+    return (Number(fixed) / 1e6).toFixed(6);
+  }
+  function fmtDeadline(unixSec) {
+    if (!unixSec) return '—';
+    const ms = unixSec * 1000;
+    const diff = ms - Date.now();
+    if (diff > 0) return new Date(ms).toLocaleString() + ' (in ' + Math.round(diff/3600000*10)/10 + 'h)';
+    return new Date(ms).toLocaleString();
+  }
+  function renderConditionalRows(condJobs) {
+    const cBody = document.getElementById('conditional-tbody');
+    if (!condJobs || condJobs.length === 0) {
+      cBody.innerHTML = '<tr><td colspan="7" style="text-align:center;opacity:.6;padding:24px">No conditional contracts declared yet</td></tr>';
+      return;
+    }
+    cBody.innerHTML = condJobs.map(j => {
+      const condition = `FR ${j.op === 'LTE' ? '≤' : '≥'} ${fmtFR(j.expected)}`;
+      const priceHtml = j.amount ? (Number(j.amount) / 1e6).toFixed(3) + ' USDC' : '—';
+      return `
+        <tr>
+          <td><span class="pname">${j.provider || '—'}</span></td>
+          <td><span class="addr">${j.asset}</span></td>
+          <td><span class="addr">${j.window}h</span></td>
+          <td><span class="jnote">${condition}</span></td>
+          <td class="num"><span class="bgt">${priceHtml}</span></td>
+          <td class="hide-sm"><span class="when">${fmtDeadline(j.deadline)}</span></td>
+          <td>${conditionalOutcomeBadge(j.outcome)}</td>
+        </tr>`;
+    }).join('');
+  }
+
   loadDashboardData();
 
   // ---- sort / filter state, applied on top of the data.json render above ----

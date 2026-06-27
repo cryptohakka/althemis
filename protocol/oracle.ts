@@ -61,6 +61,7 @@ import {
 } from './escrow.js';
 import { recordOutcome, recordVerified, recordSlash } from './tier.js';
 import { getRelay, deleteRelay, computeCommitHash } from './confidential-relay.js';
+import { processConditionalJobs } from './conditional.js';
 
 // ── Config ────────────────────────────────────────────────────
 const POLL_INTERVAL_MS = 5 * 60 * 1000;  // 5 min
@@ -545,7 +546,11 @@ async function main(): Promise<void> {
   if (!process.env.ORACLE_PRIVATE_KEY) throw new Error('ORACLE_PRIVATE_KEY not set');
 
   await processJobs();
-  setInterval(processJobs, POLL_INTERVAL_MS);
+  await processConditionalJobs();
+  setInterval(async () => {
+    await processJobs();
+    await processConditionalJobs();
+  }, POLL_INTERVAL_MS);
 }
 
 main().catch(err => {

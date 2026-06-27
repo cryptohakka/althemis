@@ -101,9 +101,40 @@ const totalSlashes = events.filter(e => e.outcome === 'slashed').length;
 const totalJobs = events.length;
 const latestSlash = events.filter(e => e.outcome === 'slashed').slice(-1)[0] ?? null;
 
+// ── Conditional contracts (separate escrow, separate state file) ──────
+// Predictions sold as conditional contracts, not graded forecasts — the
+// deterministic successor to the abandoned probabilistic Phase B. A
+// Provider declares a verifiable threshold; outcome is read from public
+// data at the deadline (released/refunded), never scored as predictive skill.
+const ASSET_NAMES: Record<number, string> = { 0: 'BTC' };
+const OP_NAMES: Record<number, string> = { 0: 'GTE', 1: 'LTE' };
+let conditionalJobs: any[] = [];
+try {
+  const condState = JSON.parse(fs.readFileSync('data/conditional_state.json', 'utf8'));
+  conditionalJobs = Object.values(condState.jobs as Record<string, any>)
+    .map((j: any) => ({
+      jobId: j.jobId,
+      provider: j.provider ? (ROLE_NAMES[j.provider] ?? j.provider) : null,
+      asset: ASSET_NAMES[j.asset] ?? j.asset,
+      window: j.window,
+      op: OP_NAMES[j.op] ?? j.op,
+      expected: j.expected ?? null,
+      deadline: j.deadline,
+      settled: j.settled,
+      outcome: j.outcome ?? 'pending',
+      realized: j.realized ?? null,
+      amount: j.amount ?? null,
+    }))
+    .sort((a: any, b: any) => b.deadline - a.deadline);
+} catch {
+  // conditional_state.json not present yet — feature not active, empty list
+  conditionalJobs = [];
+}
+
 const out = {
   providers, jobs, totalSlashes, totalJobs, latestSlash,
+  conditionalJobs,
   generatedAt: new Date().toISOString(),
 };
 fs.writeFileSync('public/data.json', JSON.stringify(out, null, 2));
-console.log(`wrote public/data.json: ${providers.length} providers, ${jobs.length} jobs shown (of ${totalJobs} total events), ${totalSlashes} slashes (latest: job#${latestSlash?.jobId})`);
+console.log(`wrote public/data.json: ${providers.length} providers, ${jobs.length} jobs shown (of ${totalJobs} total events), ${totalSlashes} slashes (latest: job#${latestSlash?.jobId}), ${conditionalJobs.length} conditional contracts`);
