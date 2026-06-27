@@ -109,6 +109,7 @@
   .wr .track{flex:1;height:5px;border-radius:3px;background:#1a2742;overflow:hidden}
   .wr .fill{height:100%;border-radius:3px;background:linear-gradient(90deg,#2f6fd6,#5c9dff)}
   .wr .pct{font-family:"JetBrains Mono",monospace;font-size:12.5px;color:var(--text-2);width:46px;text-align:right}
+  /* Retired Phase B skill/score visuals — kept disabled as forensic evidence (see README). */
   .score{font-family:"JetBrains Mono",monospace;font-weight:600;font-size:14.5px;color:var(--blue-bright)}
   .score.unrated{color:var(--muted);font-weight:500}
   .skill-tag{display:inline-block;margin-left:7px;font-size:10px;font-weight:600;letter-spacing:.3px;padding:2px 6px;border-radius:5px;vertical-align:1px;border:1px solid var(--blue-dim);color:var(--blue-bright);background:rgba(59,130,246,.08)}
@@ -313,6 +314,8 @@
 
 <script>
   const TIER_CLASS = { Gold: 'gold', Silver: 'silver', Bronze: 'bronze' };
+  // Retired Phase B (probabilistic skill scoring). Kept disabled as forensic
+  // evidence — see "How we falsified our own product" in the README.
   const SKILL_TAG_CLASS = { Unrated: 'un', Calibrated: 'flat', 'Edge-S': '', 'Edge-G': '' };
 
   function fmtAddr(a) { return a ? a.slice(0,6) + '…' + a.slice(-4) : ''; }
@@ -418,9 +421,9 @@
     }).join('');
   }
   function conditionalOutcomeBadge(outcome) {
-    if (outcome === 'released') return '<span class="badge done">Released</span>';
-    if (outcome === 'refunded') return '<span class="badge rej">Refunded</span>';
-    return '<span class="badge verifying">Pending</span>';
+    if (outcome === 'released') return '<span class="st completed">Released</span>';
+    if (outcome === 'refunded') return '<span class="st rejected">Refunded</span>';
+    return '<span class="st pending">Pending</span>';
   }
   function fmtFR(fixed) {
     if (fixed === null || fixed === undefined) return '—';
