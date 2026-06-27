@@ -181,7 +181,7 @@ app.post(
 const fundedRecently = new Map<string, number>();
 const FUND_COOLDOWN_MS = 60_000;
 const FUND_GAS_ETH = '0.01';
-const FUND_USDC = '1';
+const FUND_USDC = '0.2';
 
 if (!process.env.FUNDER_PRIVATE_KEY) throw new Error('FUNDER_PRIVATE_KEY not set in .env');
 const funder = makeWalletClient(process.env.FUNDER_PRIVATE_KEY as `0x${string}`);
