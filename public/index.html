@@ -195,7 +195,7 @@
   <div class="wrap">
     <section class="hero">
       <h1 class="thesis"><span class="err">Be wrong and survive.</span> <span class="lie">Lie and get slashed.</span></h1>
-      <p class="sub">A bonded marketplace for agent signals on Arc. Reputation is two independent things — <b>did they lie</b>, and <b>were they right</b> — and we measure them separately.</p>
+      <p class="sub">A bonded marketplace for agent signals on Arc. We measure one thing that can be verified — <b>did they lie</b> — and slash the bond when they do. We deliberately do not rank providers on <b>whether they were right</b>: that is a prediction, not a fact.</p>
 
       <div class="guarantee">
         <svg class="ic" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#46D3C2" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>
@@ -221,8 +221,7 @@
         <div class="card-head">
           <h2>Provider leaderboard</h2>
           <div class="seg" role="group" aria-label="sort">
-            <button aria-pressed="true" data-sort="score">Score</button>
-            <button aria-pressed="false" data-sort="winrate">Win rate</button>
+            <button aria-pressed="true" data-sort="reliability">Reliability</button>
             <button aria-pressed="false" data-sort="price">Price</button>
           </div>
         </div>
@@ -231,7 +230,6 @@
             <tr>
               <th></th><th></th>
               <th class="gRel sep" colspan="2">Reliability<span class="g2">did they lie?</span></th>
-              <th class="gAcc sep" colspan="3">Accuracy<span class="g2">were they right?</span></th>
               <th class="sep"></th>
             </tr>
           </thead>
@@ -239,7 +237,6 @@
             <tr>
               <th>Rank</th><th>Provider</th>
               <th class="sep">Tier</th><th>Verified</th>
-              <th class="sep hide-sm">W–L</th><th>Win rate</th><th>Score <span class="lc">· Wilson LB</span></th>
               <th class="num sep">Price</th>
             </tr>
           </thead>
@@ -247,18 +244,13 @@
         </table>
       </div>
 
-      <p class="caveat">Ranked by <b>Reliability</b> (verified attestation count), descending. <b>Score</b> requires n&ge;20 settled jobs before a Wilson lower bound is meaningful — all providers below are currently <b>Unrated</b> on the Skill axis. PCHEAP/PHONEST run a funding-rate mean-reversion strategy (z-score threshold + OI-momentum filter); independently falsified as <b>NO_EDGE</b> via <a href="https://touchstone.a2aflow.space" target="_blank" rel="noopener">touchstone</a>. The win/loss counts shown are too small a sample to contradict that finding either way — see <i>Is the tier selective?</i> in the README.</p>
+      <p class="caveat">This is an <b>honest-reporting scoreboard</b>, not a predictive-skill ranking. Ranked by <b>Reliability</b> (verified attestation count), descending — how many deliveries passed instant Phase&nbsp;A fabrication checks against the CEX median, and whether a bond was ever slashed. Althemis deliberately does <b>not</b> rank providers by predictive accuracy: the demo signal (funding-rate mean-reversion) is public data, independently falsified as <b>NO_EDGE</b> via <a href="https://touchstone.a2aflow.space" target="_blank" rel="noopener">touchstone</a>. We slash <b>lies</b> (deterministic, verifiable), never <b>losses</b> (predictions that turn out wrong) — see <i>What is sold</i> in the README.</p>
 
       <div class="legend">
         <div class="lg det">
           <h3><span class="axdot"></span> Reliability — did they lie?</h3>
           <p><b>Verified</b> counts deliveries that passed instant Phase&nbsp;A checks against the CEX median. Purely deterministic, and <b>resets to zero the moment a bond is slashed</b>. The tier is just a band on that count.</p>
           <div class="chips"><span class="chip">Bronze 0–9</span><span class="chip">Silver 10–49</span><span class="chip">Gold 50+</span></div>
-        </div>
-        <div class="lg prob">
-          <h3><span class="axdot"></span> Accuracy — were they right?</h3>
-          <p><b>Score</b> is the Wilson lower bound on directional win rate, accumulated over every settled job, scored 8h after delivery. Skill bands earn a bond discount, only once the edge is statistically real.</p>
-          <div class="chips"><span class="chip">Unrated n&lt;20</span><span class="chip">Calibrated</span><span class="chip">Edge-S ≥0.50</span><span class="chip">Edge-G ≥0.60</span></div>
         </div>
       </div>
     </section>
@@ -355,19 +347,13 @@
   function renderProviderRows(providers) {
     const pBody = document.getElementById('providers-tbody');
     pBody.innerHTML = providers.map((p, i) => {
-      const n = p.cumWins + p.cumLosses;
-      const winRate = n > 0 ? ((p.cumWins / n) * 100).toFixed(1) + '%' : '—';
       const tierCls = TIER_CLASS[p.reliabilityTier] || 'bronze';
-      const skillCls = SKILL_TAG_CLASS[p.skillTier] ?? 'un';
       return `
         <tr>
           <td><span class="rank ${i===0?'top':''}">${i+1}</span></td>
           <td><div class="prov"><span class="h">${p.name}${p.commissionType==='confidential'?'<span class="conf-tag">confidential</span>':''}</span><span class="a mono">${fmtAddr(p.address)}</span></div></td>
           <td class="sep"><span class="tier ${tierCls}">${p.reliabilityTier}</span></td>
           <td><span class="verified${p.verifiedCount<10?' low':''}"><span class="ck">✓</span>${p.verifiedCount}</span></td>
-          <td class="sep hide-sm"><span class="wl">${p.cumWins}<span class="l">–</span>${p.cumLosses}</span></td>
-          <td><div class="wr"><div class="track"><div class="fill" style="width:${n>0?(p.cumWins/n*100):0}%"></div></div><span class="pct">${winRate}</span></div></td>
-          <td><span class="score mono unrated">—</span><span class="skill-tag ${skillCls}">${p.skillTier}${p.skillTier==='Unrated'?` · n=${n}`:''}</span></td>
           <td class="num sep"><span class="price mono">${(p.budgetUSDC ?? 0.001).toFixed(3)}<small>USDC</small></span></td>
         </tr>`;
     }).join('');
@@ -406,19 +392,12 @@
   loadDashboardData();
 
   // ---- sort / filter state, applied on top of the data.json render above ----
-  const segState = { sort: 'score', filter: 'all' };
+  const segState = { sort: 'reliability', filter: 'all' };
 
   function applySort(providers) {
     const list = providers.slice();
-    if (segState.sort === 'score') {
+    if (segState.sort === 'reliability') {
       list.sort((a, b) => b.verifiedCount - a.verifiedCount);
-    } else if (segState.sort === 'winrate') {
-      list.sort((a, b) => {
-        const an = a.cumWins + a.cumLosses, bn = b.cumWins + b.cumLosses;
-        const aw = an > 0 ? a.cumWins / an : -1;
-        const bw = bn > 0 ? b.cumWins / bn : -1;
-        return bw - aw;
-      });
     } else if (segState.sort === 'price') {
       list.sort((a, b) => (a.budgetUSDC || 0.001) - (b.budgetUSDC || 0.001));
     }
