@@ -154,6 +154,7 @@
   .st.slashed{color:#F08079;background:rgba(229,100,92,.12);border-color:rgba(229,100,92,.4)}
   .st.pending{color:var(--text-2);background:#141a28;border-color:var(--line);opacity:.7}
   .jnote{font-size:11.5px;color:var(--muted);font-family:"JetBrains Mono",monospace}
+  .ph{font-size:10.5px;color:var(--muted);margin-left:6px;opacity:.7}
   .jnote a{color:var(--blue-bright);text-decoration:none} .jnote a:hover{text-decoration:underline}
   .jnote .ver{color:var(--teal)} .jnote .ch{color:var(--amber);cursor:pointer}
   .led-foot{padding:13px 18px;font-size:12px;color:var(--muted);border-top:1px solid var(--line);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
@@ -309,8 +310,9 @@
     return Math.floor(h / 24) + 'd ago';
   }
   function outcomeBadge(outcome, phase) {
+    const phaseTag = phase ? `<span class="ph">phase ${phase}</span>` : '';
     if (outcome === 'verified' && phase === 'A') {
-      return '<span class="st pending">Verifying…</span>';
+      return `<span class="st pending">Verifying…</span>${phaseTag}`;
     }
     const map = {
       verified:   ['st completed', 'Verified'],
@@ -322,7 +324,7 @@
       pending:      ['st pending',   'Pending'],
     };
     const [cls, label] = map[outcome] || ['st funded', outcome];
-    return `<span class="${cls}">${label}</span>`;
+    return `<span class="${cls}">${label}</span>${phaseTag}`;
   }
 
   async function loadDashboardData() {
@@ -379,17 +381,25 @@
       jBody.innerHTML = '<tr><td colspan="7" style="text-align:center;opacity:.6;padding:24px">No jobs match this filter</td></tr>';
       return;
     }
+    const budgetByProvider = {};
+    for (const p of (window.__althemisData?.providers || [])) {
+      budgetByProvider[p.name] = p.budgetUSDC;
+    }
     jBody.innerHTML = jobs.map(j => {
       const noteHtml = j.tx
         ? `<a href="https://testnet.arcscan.app/tx/${j.tx}" target="_blank" rel="noopener">${j.detail || j.outcome}</a>`
         : `<span class="jnote">${j.detail || ''}</span>`;
+      const budget = budgetByProvider[j.provider];
+      const budgetHtml = (budget !== undefined && budget !== null)
+        ? `${budget} USDC`
+        : '—';
       return `
         <tr>
           <td><span class="jid">#${j.jobId}</span></td>
           <td><span class="pname">${j.provider || '—'}</span></td>
-          <td><span class="addr">phase ${j.phase}</span></td>
+          <td><span class="addr">${fmtAddr(j.client)}</span></td>
           <td>${outcomeBadge(j.outcome, j.phase)}</td>
-          <td class="num"><span class="bgt">—</span></td>
+          <td class="num"><span class="bgt">${budgetHtml}</span></td>
           <td class="hide-sm"><span class="when">${timeAgo(j.ts)}</span></td>
           <td><span class="jnote">${noteHtml}</span></td>
         </tr>`;
