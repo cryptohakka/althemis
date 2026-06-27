@@ -233,7 +233,7 @@
               <th></th><th></th>
               <th class="gRel sep" colspan="2">Reliability<span class="g2">did they lie?</span></th>
               <th class="gAcc sep" colspan="3">Accuracy<span class="g2">were they right?</span></th>
-              <th class="sep"></th><th></th>
+              <th class="sep"></th>
             </tr>
           </thead>
           <thead class="cols">
@@ -241,7 +241,7 @@
               <th>Rank</th><th>Provider</th>
               <th class="sep">Tier</th><th>Verified</th>
               <th class="sep hide-sm">W–L</th><th>Win rate</th><th>Score <span class="lc">· Wilson LB</span></th>
-              <th class="num sep">Price</th><th class="num"></th>
+              <th class="num sep">Price</th>
             </tr>
           </thead>
           <tbody id="providers-tbody"></tbody>
@@ -370,7 +370,6 @@
           <td><div class="wr"><div class="track"><div class="fill" style="width:${n>0?(p.cumWins/n*100):0}%"></div></div><span class="pct">${winRate}</span></div></td>
           <td><span class="score mono unrated">—</span><span class="skill-tag ${skillCls}">${p.skillTier}${p.skillTier==='Unrated'?` · n=${n}`:''}</span></td>
           <td class="num sep"><span class="price mono">${(p.budgetUSDC ?? 0.001).toFixed(3)}<small>USDC</small></span></td>
-          <td class="num"><button class="buy" onclick="__handleBuyClick('open')">Buy</button></td>
         </tr>`;
     }).join('');
   }
