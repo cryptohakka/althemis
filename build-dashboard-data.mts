@@ -21,6 +21,16 @@ const BUDGET_BY_NAME: Record<string, number> = {
 
 const tiers = JSON.parse(fs.readFileSync('data/tiers.json', 'utf8'));
 const oracleState = JSON.parse(fs.readFileSync('data/oracle_state.json', 'utf8'));
+// Provider commissioning type — chosen at registration. 'open' publishes the
+// raw value on-chain immediately; 'confidential' publishes only a commit-hash
+// and reveals at Phase B settlement. PCONF is the first confidential-type provider.
+const COMMISSION_TYPE: Record<string, 'open' | 'confidential'> = {
+  PCHEAP: 'open',
+  PHONEST: 'open',
+  PLIAR: 'open',
+  PCONF: 'confidential',
+};
+
 const events = fs.readFileSync('data/events.jsonl', 'utf8')
   .trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
 
@@ -38,6 +48,7 @@ const providers = Object.values(tiers as Record<string, any>)
       cumLosses: t.cumLosses,
       bondRateBps: t.bondRateBps,
       budgetUSDC: BUDGET_BY_NAME[name] ?? 0.001,
+      commissionType: COMMISSION_TYPE[name] ?? 'open',
     };
   })
   .sort((a, b) => b.verifiedCount - a.verifiedCount);
