@@ -202,12 +202,12 @@
 
       <div class="hero-cols" style="display:flex;gap:18px;align-items:stretch;flex-wrap:wrap;margin-top:22px">
         <div class="guarantee" style="flex:1 1 320px">
-          <h3><svg class="ic" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#46D3C2" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg> Every signal is bonded.</h3>
+          <h3><svg class="ic" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#46D3C2" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg> Every deterministic fact is bonded.</h3>
           <p>If a provider reports a fabricated value, the bond is slashed and you are refunded in full — on-chain, in the same transaction. <span class="warn">What the bond does not cover: an honest signal that turns out wrong. That risk is what Score measures.</span></p>
         </div>
         <div class="lg det" style="flex:1 1 320px">
           <h3><span class="axdot"></span> Reliability — did they lie?</h3>
-          <p><b>Verified</b> counts deliveries that passed instant fabrication checks against the CEX median. Purely deterministic, and <b>resets to zero the moment a bond is slashed</b>.</p>
+          <p><b>Verified</b> counts deliveries that passed instant fabrication checks against the CEX median. Purely deterministic, and <b>resets to zero the moment a bond is slashed</b>. The tier is just a band on that count.</p>
           <div class="chips"><span class="chip">Bronze 0–9</span><span class="chip">Silver 10–49</span><span class="chip">Gold 50+</span></div>
         </div>
       </div>
@@ -257,7 +257,7 @@
         </table>
       </div>
 
-      <p class="caveat">This is an <b>honest-reporting scoreboard</b>, not a predictive-skill ranking. Ranked by <b>Reliability</b> (verified attestation count), descending — how many deliveries passed instant fabrication checks against the CEX median, and whether a bond was ever slashed. Althemis deliberately does <b>not</b> rank providers by predictive accuracy — being right is a prediction, not a fact, and only facts are bonded. The demo signal is funding-rate mean-reversion on public data. We slash <b>lies</b> (deterministic, verifiable), never <b>losses</b> (predictions that turn out wrong). All providers currently report <b>FR</b> (funding rate); OI, regime, and private feeds sit on the roadmap along a reproduction-cost gradient — see <i>What is sold</i> in the README.</p>
+      <p class="caveat">This is an <b>honest-reporting scoreboard</b>, not a predictive-skill ranking. Ranked by <b>Reliability</b> (verified attestation count), descending — how many deliveries passed instant fabrication checks against the CEX median, and whether a bond was ever slashed. Althemis deliberately does <b>not</b> rank providers by predictive accuracy — being right is a prediction, not a fact, and only facts are bonded. The demo signal is funding-rate mean-reversion — intentionally public, a universally verifiable signal so the slash mechanism can be checked independently. The mechanism, not the signal, is the demo. We slash <b>lies</b> (deterministic, verifiable), never <b>losses</b> (predictions that turn out wrong). All providers currently report <b>FR</b> (funding rate); OI, regime, and private feeds sit on the roadmap along a reproduction-cost gradient — see <i>What is sold</i> in the README.</p>
 
 
     </section>
