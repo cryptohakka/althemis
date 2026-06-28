@@ -99,6 +99,7 @@ for (const e of recentEvents) {
 }
 
 const totalSlashes = events.filter(e => e.outcome === 'slashed').length;
+const totalEvents = Math.max(0, ...events.map(e => e.eventId ?? 0));
 const totalJobs = Math.max(...events.map(e => parseInt(e.jobId, 10))); // latest on-chain job number (BondHook sequential id)
 const latestSlash = events.filter(e => e.outcome === 'slashed').slice(-1)[0] ?? null;
 
@@ -133,7 +134,7 @@ try {
 }
 
 const out = {
-  providers, jobs, totalSlashes, totalJobs, latestSlash,
+  providers, jobs, totalSlashes, totalJobs, totalEvents, latestSlash,
   conditionalJobs,
   generatedAt: new Date().toISOString(),
 };

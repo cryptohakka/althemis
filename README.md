@@ -48,6 +48,8 @@ The first version of Althemis drew this line and then made a second, quieter cla
 
 A Provider can be wrong and survive — being wrong simply refunds the buyer. A Provider cannot lie and survive — a fabricated input is slashed regardless of any condition. **Althemis insures honesty, not alpha.**
 
+The two failures settle on different clocks: a lie returns your money fast (Phase A slashes within minutes, no waiting for the prediction window); a missed prediction returns your money on schedule (the conditional contract refunds at the deadline — no slash, no penalty beyond losing the sale). Different harms, different remedies, but the Consumer is made whole either way.
+
 **One principle ties the two layers together — input integrity.** A conditional contract is only meaningful if the facts it is built on were themselves verifiable. The condition is measured against the *same* attested, Phase-A-checked public data that the slash layer polices. A Provider cannot declare a condition over a fabricated feed: the fact layer is slashable, so the contract layer inherits its integrity.
 
 ## How we falsified our own product
@@ -62,12 +64,7 @@ This result is scoped to frZ. It is **not** a claim that funding-rate prediction
 
 ### What actually failed was the mechanism, not just the signal
 
-Even granting a hypothetical signal *with* edge, the Phase B scorer had problems independent of frZ's null result:
-
-- **The window promoted noise.** v1.0 ranked Providers by win rate over a 20-job window, promoting at `win_rate ≥ 0.60`. Under a fair coin, `P(win_rate ≥ 0.60 | n=20, p=0.5) = P(X ≥ 12 | Binom(20,0.5)) = 0.252` — a zero-edge Provider clears Silver in **one window out of four**. False promotion was not a tail event.
-- **The point estimate is not the edge.** A Provider at 13/20 = 65% looks promotable, but its Wilson 95% interval `[0.39, 0.78]` straddles 0.50 — coin-flip cannot be rejected. Ranking on the point estimate ranks on sampling noise.
-- **The gate that should have caught this didn't.** The Council gate meant to filter weak signals sits at the **14.8th percentile → NOT_SELECTIVE**, against an oracle positive control at the **0th percentile → SELECTIVE**. The gate we would have relied on does not select.
-- **And there was no clean buyer.** A graded directional score is a number the protocol asserts about a Provider, which no Consumer was actually paying for. The product-market fit of "buy a graded forecast" was never there.
+Even granting a hypothetical signal *with* edge, the Phase B scorer had problems independent of frZ's null result: its 20-job promotion window let a zero-edge Provider clear Silver roughly one window in four by chance alone, the point estimates it ranked on sat inside confidence intervals that straddled coin-flip, and its own Council selectivity gate — meant to catch exactly this — scored as **NOT_SELECTIVE** against an oracle positive control that scored **SELECTIVE**. The safety net that should have caught a non-signal didn't. And underneath all three: no Consumer was ever paying for a graded directional score in the first place.
 
 So the thing we falsified is not "frZ has no edge" (one data point toward it) — it is **the Phase B mechanism itself: grading predictions as a saleable product.** A better signal would not have fixed the noisy window, the non-selective gate, or the absent buyer.
 
@@ -89,11 +86,7 @@ Althemis sells two things, and is precise about which is which.
 
 ### Why a contract, not a score
 
-The retired Phase B tried to *grade* predictions: score directional calls, accumulate a win rate, grant a bond discount to "skilled" Providers. Three things were wrong with it, and the conditional contract fixes all three structurally rather than by tuning:
-
-- **Grading needs a skill signal that survives scrutiny.** Ours did not (previous section). A contract needs no such signal: it pays out on a public fact, not on an inferred ability.
-- **A score is the protocol's opinion about a Provider.** A contract is just an escrow with a public trigger — the protocol holds no opinion, takes no view, and cannot be wrong about "skill" because it never estimates skill.
-- **A wrong prediction under Phase B still cost the buyer** (they paid for a signal that missed). Under a conditional contract, a missed condition **refunds** the buyer. The buyer's downside on a wrong call is now zero, by construction.
+The retired Phase B tried to *grade* predictions — score directional calls, accumulate a win rate, discount the bond for "skilled" Providers. The conditional contract fixes structurally what that mechanism never could tune around: no skill signal to defend (ours didn't survive scrutiny, see above), no protocol opinion to be wrong about, and a missed condition refunds the buyer instead of costing them — zero downside on a wrong call, by construction.
 
 ### What's deployed
 
@@ -109,15 +102,6 @@ Two contracts, independent of the BondHook/ERC-8183 suite (own escrow, no shared
 **v1 is intentionally minimal:** no fee, no bond, no challenger on the conditional layer. Settlement is deterministic and re-derivable from public data, so a full release or full refund needs no dispute path. If the feed is not yet posted at the deadline, the escrow **holds** — it never defaults to a payout. Fee economics and a feed-value challenge path are on the roadmap.
 
 **Buyer-facing reputation: Fulfillment, not Skill.** A Provider's declared-condition fulfillment rate (release ÷ total settled) is a deterministic, public ratio — the honest successor to the retired skill score, for *display* only. It is never wired into the bond rate: bond economics depend on Reliability alone, so a Provider cannot buy a cheaper bond by making easy calls. This is the same trap the skill discount fell into, avoided structurally.
-
-## Two-layer guarantee
-
-The two failures settle on different clocks, and that is the point.
-
-- **A lie returns your money fast.** A fabricated fact is caught by Phase A against the 6-CEX median and slashed within minutes — deterministic, autonomous, no waiting for the prediction window.
-- **A missed prediction returns your money on schedule.** A conditional contract that doesn't meet its condition refunds the Consumer at the deadline (e.g. 8h for FR) — no slash, no penalty to the Provider beyond losing the sale.
-
-A lie and an error are different harms, so they have different remedies: the lie burns the Provider's bond now; the miss refunds the Consumer's escrow at maturity. The Consumer is made whole either way.
 
 ## Architecture
 
@@ -243,11 +227,7 @@ PCONF is never in `ROSTER_ROLES` / `getActiveRoles` under any `ROLLOUT_PHASE`. A
 
 **Embargo model:** the raw value becomes public again at settlement (~8h later, same FR_WINDOW_MS as the rest of the protocol) via the existing event log — same mechanism financial markets use for earnings embargoes. The transparency guarantee (every terminal oracle decision is logged, verifiable, reproducible) is preserved: confidential jobs are temporarily hidden, never permanently opaque.
 
-**What's real vs what's staged (Plan B, applied to the x402 layer):**
-
-- **L1 (immutable):** open and confidential jobs run through the unmodified ERC8183/BondHook contract suite — same job lifecycle, same bond math, same slash path.
-- **L2 (operator demo harness):** PCONF (provider) and PCONF_CONSUMER (buyer-side EOA) are two separately-funded wallets executing real on-chain transactions — createJob/fundJob signed by PCONF_CONSUMER, setBudget/submitSignal signed by PCONF — avoiding ERC8183's `client == provider` rejection (confirmed via `simulateContract`: the contract reverts on self-dealing with a dedicated custom error) and matching the same consumer/provider split already used by the autonomous CBUYER → PCHEAP path.
-- **L3 (external participants):** **zero independent third parties, disclosed honestly** — but the full x402 payment loop has been exercised end-to-end using a real, independently-funded ephemeral buyer EOA (Circle Gateway deposit → `gateway.pay()` → 402 challenge resolved → settlement). Both commissioning types were exercised during development; the marketplace now runs confidential-type commissioning, and both settlement paths are verified on-chain:
+**What's verified on-chain** (same L1/L2/L3 honesty split as [What's real vs what's staged](#whats-real-vs-whats-staged)): PCONF and PCONF_CONSUMER are separately-funded wallets — avoiding ERC8183's `client == provider` self-dealing rejection — and the full x402 payment loop (Circle Gateway deposit → `gateway.pay()` → 402 challenge → settlement) has been exercised end-to-end with a real, independently-funded ephemeral buyer EOA. Both commissioning types are verified on-chain:
 
   | Tier | Job ID | Settle amount | Submit tx |
   |---|---|---|---|
@@ -260,13 +240,7 @@ PCONF is never in `ROSTER_ROLES` / `getActiveRoles` under any `ROLLOUT_PHASE`. A
 
 </details>
 
-<details>
-<summary><b>Future Work: ZK / TEE / MPC alternatives to commit-hash confidentiality</b></summary>
-
-
-A zero-knowledge range proof (prove `|value - median| <= threshold` without revealing `value`) would remove the "oracle operator can see it" caveat entirely — but circuit development is a week-plus undertaking, and on-chain verification gas cost would dwarf PCHEAP's sub-cent budget model. TEE/MPC approaches were also considered and rejected: they relocate trust to a hardware vendor or an N-of-M operator set, and Althemis currently runs a single oracle operator (N≥2 MPC requirements don't apply). Commit-hash confidentiality with a disclosed embargo window was chosen as the option deliverable within the hackathon timeframe, with the trust model stated plainly rather than obscured.
-
-</details>
+*ZK/TEE/MPC alternatives to commit-hash confidentiality are future work — circuit cost and trust relocation made commit-hash the right hackathon-scope choice; see [Known Limitations](#known-limitations--roadmap).*
 
 ## Status
 
@@ -275,7 +249,7 @@ A zero-knowledge range proof (prove `|value - median| <= threshold` without reve
 - ✅ **The oracle slashes autonomously.** Phase A reaches its verdict from a 6-CEX median with a deterministic threshold and submits the on-chain `reject` itself — no external price oracle, no human in the slash path. The fabrication verdict is reproducible: the same CEX quorum and threshold yield the same outcome on replay.
 - ✅ Live slash on Arc Testnet (BondHook `0xc522095eb7ddaa9b67ca735eebedc073370a5f5f`): a fabricated `FR_BTC_8h=0.005;z=99` was caught against a 6-CEX median of `~0` (`diff=5.0e-3` > threshold `1.07e-4`, quorum 6/6) and slashed: [`0x021e0422...`](https://testnet.arcscan.app/tx/0x021e0422d5752137eabdf3c1d0d90d93cfb71856216790230bdeb2c8cd44a8a8). The provider's `verifiedCount` reset `1 -> 0`, returning the bond rate to the `20000` bps default.
 - ✅ **Conditional contract layer deployed and wired.** `ConditionalPriceFeed` and `ConditionalEscrow` are live on Arc Testnet (addresses above), with 12 Foundry tests passing and the existing BondHook suite unchanged (43/43). The oracle discovers `Committed` jobs, posts realized values at the deadline, and settles permissionlessly; the provider side (`PCHEAP`) declares a condition from its FR signal whenever direction is non-neutral, and the dashboard renders the conditional ledger.
-- ⏳ **First conditional settlement not yet captured, disclosed honestly.** The provider only declares a condition on a non-neutral FR direction (the same no-claim-on-neutral rule as the retired Phase B). The market has been in a neutral funding regime since deployment, so no conditional contract has committed yet — and we will not force-fire one against a live wallet to manufacture a screenshot. The mechanism is verified by its 12 on-chain-semantics tests and the live deployment; the first organic release/refund tx will appear on the dashboard when the market moves, and is not backfilled here.
+- ✅ **First organic conditional settlement captured.** PCHEAP declared `FR(BTC,8h) ≤ -54` against a live Consumer escrow (job [`0xefa1422...`](https://testnet.arcscan.app/tx/0xf4c886845b07a53ed35eb69d3f8f0f12b625c2b3341282d2a2a535d6df059a7d)); the realized rate posted at `+23`, the condition was not met, and `ConditionalEscrow` autonomously refunded the Consumer — [`0xd380b1c4...`](https://testnet.arcscan.app/tx/0xd380b1c431b3e3b714d7773c2d62101f759971f965317a590c9d16a2431def41). No operator action: the provider declared, the market moved against it, the contract settled.
 - ✅ Automated pipeline under systemd: `althemis.service` (Council consumer cycle + Provider job submission + conditional declaration) and `althemis-oracle.service` (Phase A + conditional settlement) run unattended, with state persisted across restarts.
 - ✅ `BondHook.sol` Foundry suite: 31 tests — bond lock/unlock/withdraw, `beforeFund` coverage + new-provider caps, two-axis bond rate (Reliability sets bps, retired Skill discount + 110% floor), 3-way slash distribution (consumer 100% / challenger 10% / treasury remainder) with event/balance assertions, and the non-slash reject path. `ConditionalEscrow.sol` suite: 12 tests — release/refund × GTE/LTE, feed-not-ready hold, signature & parameter-mismatch rejection, double-commit/settle guards, boundary inclusivity. Run with `forge test` (43/43).
 - ✅ Live dashboard at [`althemis.a2aflow.space`](https://althemis.a2aflow.space), rendering the real roster (PCHEAP/PHONEST/PLIAR/PCONF), recent oracle events, and the conditional-contract ledger from a static `data.json` generated every 5 minutes by a systemd timer — no mock data.
@@ -297,32 +271,27 @@ There are no independent third-party Providers or Consumers on the marketplace t
 ## Known Limitations & Roadmap
 
 <details>
-<summary><b>Deliberate design choices (not bugs)</b> — fabrication threshold floor, quorum fallback, conditional hold, regime bonding</summary>
+<summary><b>Design choices & v1 scope cuts</b> — fabrication threshold floor, quorum fallback, conditional hold, regime bonding, thin on-chain scope, deferred OI/Adjudicator</summary>
 
+**Deliberate, not bugs:**
+- **Fabrication threshold = `max(3×MAD, 0.0001)`.** An absolute floor stops a collapsed MAD (low-volatility regimes) from slashing honest Providers over aggregation noise — only unambiguous fabrication is punished.
+- **Quorum 4/6, `unverifiable` fallback.** Below quorum, or past the 15-min freshness window, the job settles COMPLETE with no slash and no tier impact. The protocol never punishes what it could not verify.
+- **Conditional settlement holds, never defaults.** If `ConditionalPriceFeed` isn't posted at the deadline, `settle` reverts and the escrow holds — resolving on the next poll once the feed lands. Never pays out on data it doesn't have.
+- **Regime signals carry no bond** — interpretive classification stays in the reputation domain, Adjudicator as backstop.
 
-- **Fabrication threshold = `max(3×MAD, 0.0001)`.** In low-volatility regimes MAD collapses toward zero, which would make a pure 3×MAD rule slash honest Providers whose aggregation method merely differs from the oracle's. The absolute floor guarantees that only unambiguous fabrication is punished — consistent with the core principle that punishment must stay deterministic. The floor is what makes the honest path survive: an attested FR a few parts in 1e-6 away from consensus sits far inside a floor-dominated threshold of `1e-4` and is VERIFIED, never slashed.
-- **Quorum 4/6 with `unverifiable` fallback.** If fewer than 4 of 6 CEXs respond, the oracle retries; if the attestation freshness window (15 min) expires, the job settles COMPLETE with **no slash and no tier impact**. The protocol never punishes what it could not verify.
-- **Conditional settlement holds, never defaults.** If the realized value has not been posted to `ConditionalPriceFeed` at the deadline (e.g. a transient CEX-quorum failure), `settle` reverts and the escrow is held — it never defaults to a release or a refund. A held escrow resolves on the next poll once the feed is posted. The protocol never pays out on data it does not have.
-- **Regime signals carry no bond.** Regime classification is interpretive; it lives entirely in the reputation domain with the Adjudicator as backstop.
-
-</details>
-
-<details>
-<summary><b>v1 scope cuts</b> — thin on-chain scope, conditional v1 minimalism, deferred OI verification, operator-run Adjudicator</summary>
-
-
-- **On-chain scope is deliberately thin.** This repository's contracts are `BondHook.sol` (bond custody, the Reliability bond rate + 110% floor, the new-provider exposure cap, and slash execution) and the conditional pair (`ConditionalEscrow.sol` + `ConditionalPriceFeed.sol`). The job lifecycle (create / fund / submit / settle) lives in an external **ERC-8183** job marketplace core deployed on Arc Testnet; Althemis hangs off it as a hook rather than re-implementing a registry. Dependency details (core contract address, ABI notes) are in `protocol/escrow.ts`.
-- **Conditional layer is v1-minimal: no fee, no bond, no challenger.** Settlement is deterministic and re-derivable from public data, so v1 takes no fee and runs no challenger on the conditional path. Fee economics, a feed-value challenge path (reusing the BondVault optimistic-challenge pattern), and shorter windows (1h, once a price feed backs them) are roadmap items. The selectable window is currently `{8,16,24}h`.
-- **Interpretive-dispute filer reward (broad 60/20/20 split) is deferred.** The implemented slash is already 3-way — consumer 100% / challenger 10% / treasury remainder — and the challenger reward is live for *deterministic* permissionless challenges (expired squatters, post-expiry submits). What v2 adds is a filer reward for *interpretive* disputes, which only makes sense once dispute filing for non-deterministic claims is permissionless — that requires the v2 Adjudicator work below.
-- **OI attestation verification is deferred.** Open interest lacks a clean cross-exchange consensus value (OI is venue-local, not fungible across exchanges the way funding rates are comparable). Rather than auto-passing OI attestations — which would dilute the meaning of "verified" — OI jobs are held out of Phase A until a sound verification source is defined.
-- **Adjudicator is operator-run.** v1 uses a single operator-controlled Adjudicator, invoked only on attestation-fraud disputes. v2 roadmap: decentralize adjudication (committee or restaked-operator model), open dispute filing permissionlessly (50%-of-bond filer stake, 20% filer reward), and extend dispute scope beyond attestation fraud only where a deterministic verification rule exists for the new claim type.
+**v1 scope cuts:**
+- **On-chain scope is thin by design.** This repo ships `BondHook.sol` and the conditional pair; job lifecycle (create/fund/submit/settle) lives in an external **ERC-8183** core that Althemis hooks into rather than re-implementing.
+- **Conditional layer is v1-minimal:** no fee, no bond, no challenger — settlement is deterministic and re-derivable, so none are needed yet. Window is currently `{8,16,24}h`; shorter windows and a feed-value challenge path are roadmap.
+- **Interpretive-dispute filer reward deferred.** The deterministic slash is already 3-way (consumer 100% / challenger 10% / treasury remainder); a broader filer reward for *interpretive* disputes needs the v2 Adjudicator work below.
+- **OI attestation deferred** — no clean cross-exchange consensus value for OI yet, so OI jobs sit outside Phase A rather than auto-passing.
+- **Adjudicator is operator-run in v1**, invoked only on attestation-fraud disputes. v2: decentralize, open permissionless filing (50%-of-bond stake, 20% reward), extend scope where a deterministic rule exists.
 
 </details>
 
 ### Roadmap
 
 1. ✅ Foundry suites: `BondHook.sol` (31) + `ConditionalEscrow.sol` (12) — **done, 43 passing**
-2. ✅ Conditional contract layer (deploy + oracle settlement + provider declaration + dashboard) — **done; first organic settlement pending a non-neutral market**
+2. ✅ Conditional contract layer (deploy + oracle settlement + provider declaration + dashboard) — **done; first organic settlement captured (refund)**
 3. Confidential × conditional: sealed proprietary conditions (the pairing that makes confidentiality a product)
 4. Conditional fee economics + feed-value challenge path + shorter windows
 5. Public Provider onboarding (external, non-operator participants)

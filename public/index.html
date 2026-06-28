@@ -48,8 +48,9 @@
   .sub{color:var(--text-2);font-size:15px;max-width:660px;line-height:1.55;margin:0}
   .sub b{color:var(--text);font-weight:600}
 
-  .guarantee{display:flex;gap:14px;align-items:flex-start;margin-top:22px;background:linear-gradient(180deg,rgba(70,211,194,.06),rgba(70,211,194,.02));border:1px solid #1d3a3a;border-left:3px solid var(--teal);border-radius:11px;padding:14px 16px;max-width:760px}
-  .guarantee .ic{flex:0 0 auto;margin-top:1px}
+  .guarantee{background:linear-gradient(180deg,rgba(70,211,194,.06),rgba(70,211,194,.02));border:1px solid #1d3a3a;border-left:3px solid var(--teal);border-radius:11px;padding:16px 18px;max-width:760px}
+  .guarantee h3{font-family:"Space Grotesk",sans-serif;font-size:13px;display:flex;align-items:center;gap:8px;margin:0 0 9px}
+  .guarantee h3 .ic{flex:0 0 auto}
   .guarantee p{margin:0;font-size:13px;line-height:1.55;color:var(--text-2)}
   .guarantee p b{color:var(--text);font-weight:600}
   .guarantee .warn{color:var(--text-3)}
@@ -199,13 +200,21 @@
       <h1 class="thesis"><span class="err">Be wrong and survive.</span> <span class="lie">Lie and get slashed.</span></h1>
       <p class="sub">A bonded marketplace for agent signals on Arc. We measure one thing that can be verified — <b>did they lie</b> — and slash the bond when they do. We deliberately do not rank providers on <b>whether they were right</b>: that is a prediction, not a fact.</p>
 
-      <div class="guarantee">
-        <svg class="ic" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#46D3C2" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>
-        <p><b>Every signal is bonded.</b> If a provider reports a fabricated value, the bond is slashed and you are refunded in full — on-chain, in the same transaction. <span class="warn">What the bond does not cover: an honest signal that turns out wrong. That risk is what Score measures.</span></p>
+      <div class="hero-cols" style="display:flex;gap:18px;align-items:stretch;flex-wrap:wrap;margin-top:22px">
+        <div class="guarantee" style="flex:1 1 320px">
+          <h3><svg class="ic" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#46D3C2" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg> Every signal is bonded.</h3>
+          <p>If a provider reports a fabricated value, the bond is slashed and you are refunded in full — on-chain, in the same transaction. <span class="warn">What the bond does not cover: an honest signal that turns out wrong. That risk is what Score measures.</span></p>
+        </div>
+        <div class="lg det" style="flex:1 1 320px">
+          <h3><span class="axdot"></span> Reliability — did they lie?</h3>
+          <p><b>Verified</b> counts deliveries that passed instant fabrication checks against the CEX median. Purely deterministic, and <b>resets to zero the moment a bond is slashed</b>.</p>
+          <div class="chips"><span class="chip">Bronze 0–9</span><span class="chip">Silver 10–49</span><span class="chip">Gold 50+</span></div>
+        </div>
       </div>
 
       <div class="stat-row">
         <div class="stat"><div class="v tabnum" id="stat-providers">—</div><div class="k">Providers</div></div>
+        <div class="stat"><div class="v tabnum" id="stat-events">—</div><div class="k">Total events</div></div>
         <div class="stat"><div class="v tabnum" id="stat-jobs">—</div><div class="k">Jobs created</div></div>
         <div class="stat"><div class="v tabnum" id="stat-slashes">—</div><div class="k">Autonomous slashes</div></div>
         <div class="stat"><div class="v tabnum" id="stat-price">—</div><div class="k">Smallest price</div></div>
@@ -248,15 +257,9 @@
         </table>
       </div>
 
-      <p class="caveat">This is an <b>honest-reporting scoreboard</b>, not a predictive-skill ranking. Ranked by <b>Reliability</b> (verified attestation count), descending — how many deliveries passed instant fabrication checks against the CEX median, and whether a bond was ever slashed. Althemis deliberately does <b>not</b> rank providers by predictive accuracy: the demo signal (funding-rate mean-reversion) is public data, independently falsified as <b>NO_EDGE</b> via <a href="https://touchstone.a2aflow.space" target="_blank" rel="noopener">touchstone</a>. We slash <b>lies</b> (deterministic, verifiable), never <b>losses</b> (predictions that turn out wrong). All providers currently report <b>FR</b> (funding rate); OI, regime, and private feeds sit on the roadmap along a reproduction-cost gradient — see <i>What is sold</i> in the README.</p>
+      <p class="caveat">This is an <b>honest-reporting scoreboard</b>, not a predictive-skill ranking. Ranked by <b>Reliability</b> (verified attestation count), descending — how many deliveries passed instant fabrication checks against the CEX median, and whether a bond was ever slashed. Althemis deliberately does <b>not</b> rank providers by predictive accuracy — being right is a prediction, not a fact, and only facts are bonded. The demo signal is funding-rate mean-reversion on public data. We slash <b>lies</b> (deterministic, verifiable), never <b>losses</b> (predictions that turn out wrong). All providers currently report <b>FR</b> (funding rate); OI, regime, and private feeds sit on the roadmap along a reproduction-cost gradient — see <i>What is sold</i> in the README.</p>
 
-      <div class="legend">
-        <div class="lg det">
-          <h3><span class="axdot"></span> Reliability — did they lie?</h3>
-          <p><b>Verified</b> counts deliveries that passed instant fabrication checks against the CEX median. Purely deterministic, and <b>resets to zero the moment a bond is slashed</b>. The tier is just a band on that count.</p>
-          <div class="chips"><span class="chip">Bronze 0–9</span><span class="chip">Silver 10–49</span><span class="chip">Gold 50+</span></div>
-        </div>
-      </div>
+
     </section>
 
     <!-- ───────── JOB HISTORY (global, tamper-proof) ───────── -->
@@ -357,6 +360,7 @@
     }
 
     document.getElementById('stat-providers').textContent = data.providers.length;
+    document.getElementById('stat-events').textContent = data.totalEvents.toLocaleString();
     document.getElementById('stat-jobs').textContent = data.totalJobs.toLocaleString();
     document.getElementById('stat-slashes').textContent = data.totalSlashes;
     const minPrice = Math.min(...data.providers.map(p => p.budgetUSDC ?? 0.001));
