@@ -272,7 +272,6 @@
           <div class="seg" role="group" aria-label="filter">
             <button aria-pressed="true" data-filter="all">All</button>
             <button aria-pressed="false" data-filter="completed">Completed</button>
-            <button aria-pressed="false" data-filter="rejected">Rejected</button>
             <button aria-pressed="false" data-filter="slashed">Slashed</button>
           </div>
         </div>
@@ -334,7 +333,7 @@
   function outcomeBadge(outcome, phase) {
     const phaseTag = ''; // phase A/B is internal pipeline staging — not surfaced in the UI
     if (outcome === 'verified' && phase === 'A') {
-      return `<span class="st pending">Verifying…</span>${phaseTag}`;
+      return `<span class="st pending">Verified · settling</span>${phaseTag}`;
     }
     const map = {
       verified:   ['st completed', 'Verified'],
@@ -480,8 +479,7 @@
 
   function applyFilter(jobs) {
     if (segState.filter === 'all') return jobs;
-    if (segState.filter === 'completed') return jobs.filter(j => j.outcome === 'verified' || j.outcome === 'win' || j.outcome === 'no_contest');
-    if (segState.filter === 'rejected') return jobs.filter(j => j.outcome === 'loss' || j.outcome === 'unverifiable');
+    if (segState.filter === 'completed') return jobs.filter(j => j.outcome === 'verified' || j.outcome === 'win');
     if (segState.filter === 'slashed') return jobs.filter(j => j.outcome === 'slashed');
     return jobs;
   }

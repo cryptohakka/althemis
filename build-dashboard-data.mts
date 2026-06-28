@@ -64,7 +64,10 @@ const providers = Object.values(tiers as Record<string, any>)
   .sort((a, b) => b.verifiedCount - a.verifiedCount);
 
 const RECENT_N = 200;
-const recentEvents = [...events].sort((a, b) => (b.eventId ?? 0) - (a.eventId ?? 0)).slice(0, RECENT_N);
+const recentEvents = [...events]
+  .filter(e => e.outcome !== 'no_contest' && e.outcome !== 'unverifiable')
+  .sort((a, b) => (b.eventId ?? 0) - (a.eventId ?? 0))
+  .slice(0, RECENT_N);
 
 const jobs = [];
 for (const e of recentEvents) {
