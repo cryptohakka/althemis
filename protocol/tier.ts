@@ -185,11 +185,15 @@ function deriveSkillTier(wins: number, losses: number, current: SkillTier): Skil
 }
 
 function skillDiscountNum(t: SkillTier): number {
-  switch (t) {
-    case 'Edge-G': return DISCOUNT_EDGE_G;
-    case 'Edge-S': return DISCOUNT_EDGE_S;
-    default:       return DISCOUNT_CALIBRATED;
-  }
+  // RETIRED: predictive skill no longer discounts the bond rate. win/loss is
+  // still computed, recorded, and surfaced (cumWins/cumLosses, Wilson lcb,
+  // skillTier) as forensic evidence of the probabilistic Phase B we built and
+  // measured — but it is deliberately disconnected from price. Bond rate is a
+  // function of Reliability (deterministic verified count) only.
+  // See README "How we falsified our own product".
+  void t;
+  void DISCOUNT_EDGE_G; void DISCOUNT_EDGE_S;
+  return DISCOUNT_CALIBRATED; // always ×1.00
 }
 
 function computeBondRateBps(r: ReliabilityTier, s: SkillTier): number {
