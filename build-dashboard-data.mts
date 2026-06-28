@@ -64,7 +64,7 @@ const providers = Object.values(tiers as Record<string, any>)
   .sort((a, b) => b.verifiedCount - a.verifiedCount);
 
 const RECENT_N = 200;
-const recentEvents = events.slice(-RECENT_N).reverse();
+const recentEvents = [...events].sort((a, b) => (b.eventId ?? 0) - (a.eventId ?? 0)).slice(0, RECENT_N);
 
 const jobs = [];
 for (const e of recentEvents) {
@@ -86,6 +86,7 @@ for (const e of recentEvents) {
   }
 
   jobs.push({
+    eventId: e.eventId,
     jobId: e.jobId,
     ts: e.ts,
     phase: e.phase,

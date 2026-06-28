@@ -153,6 +153,23 @@ function saveState(db: OracleStateDB): void {
 // terminal oracle decision. One JSON object per line. Consumed by
 // tools/oracle_metrics.py (--events ./data/events.jsonl).
 const EVENTS_PATH = './data/events.jsonl';
+
+// Monotonic event id. Restored from the last line of events.jsonl at startup,
+// then ++ per logEvent. Single oracle process (systemd, no multi-instance) →
+// strictly increasing, no races. eventId is the dashboard's display sort key:
+// job history sorts by eventId desc, so a late Phase-B settle of an old jobId
+// no longer jumps above newer jobs — row order = record order, while jobId
+// stays the (intentionally sparse) on-chain identifier.
+let eventCounter = 0;
+function initEventCounter(): void {
+  try {
+    const txt = readFileSync(EVENTS_PATH, 'utf-8').trimEnd();
+    if (!txt) { eventCounter = 0; return; }
+    const lines = txt.split('\n');
+    const last = JSON.parse(lines[lines.length - 1]);
+    eventCounter = typeof last.eventId === 'number' ? last.eventId : lines.length;
+  } catch { eventCounter = 0; }
+}
 function logEvent(e: {
   phase: 'A' | 'B';
   jobId: string;
@@ -163,7 +180,8 @@ function logEvent(e: {
 }): void {
   try {
     mkdirSync('./data', { recursive: true });
-    appendFileSync(EVENTS_PATH, JSON.stringify({ ts: new Date().toISOString(), ...e }) + '\n');
+    const eventId = ++eventCounter;
+    appendFileSync(EVENTS_PATH, JSON.stringify({ eventId, ts: new Date().toISOString(), ...e }) + '\n');
   } catch (err) {
     console.error('[oracle] event ledger append failed:', err);
   }
@@ -538,6 +556,8 @@ async function processJobs(): Promise<void> {
 
 async function main(): Promise<void> {
   console.log('[oracle] Althemis Price Oracle starting (two-phase, two-axis tier)');
+  initEventCounter();
+  console.log(`[oracle] event counter initialized at ${eventCounter}`);
   console.log(`[oracle] ERC8183=${ERC8183_ADDRESS}`);
   console.log(`[oracle] poll=${POLL_INTERVAL_MS / 60000}min, attestation freshness=${ATTESTATION_FRESHNESS_MS / 60000}min`);
   console.log(`[oracle] fabrication=max(${FABRICATION_MAD_MULTIPLIER}×MAD, ${FR_FABRICATION_FLOOR}), no-contest=${FR_NO_CONTEST_MAD_MULTIPLIER}×MAD, quorum=${MIN_CEX_QUORUM}/6`);

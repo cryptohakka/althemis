@@ -276,7 +276,7 @@
         <table class="led">
           <thead>
             <tr>
-              <th>Job</th><th>Provider</th><th>Buyer</th><th>Status</th>
+              <th>Event</th><th>Job</th><th>Provider</th><th>Buyer</th><th>Status</th>
               <th class="num">Budget</th><th class="hide-sm">When</th><th></th>
             </tr>
           </thead>
@@ -393,7 +393,7 @@
   function renderJobRows(jobs) {
     const jBody = document.getElementById('jobs-tbody');
     if (jobs.length === 0) {
-      jBody.innerHTML = '<tr><td colspan="7" style="text-align:center;opacity:.6;padding:24px">No jobs match this filter</td></tr>';
+      jBody.innerHTML = '<tr><td colspan="8" style="text-align:center;opacity:.6;padding:24px">No jobs match this filter</td></tr>';
       return;
     }
     const budgetByProvider = {};
@@ -410,7 +410,8 @@
         : '—';
       return `
         <tr>
-          <td><span class="jid">#${j.jobId}</span></td>
+          <td><span class="jid" style="color:var(--text)">#${j.eventId}</span></td>
+          <td><span class="jid" style="color:var(--text-3)">#${j.jobId}</span></td>
           <td><span class="pname">${j.provider || '—'}</span></td>
           <td><span class="addr">${fmtAddr(j.client)}</span></td>
           <td>${outcomeBadge(j.outcome, j.phase)}</td>
