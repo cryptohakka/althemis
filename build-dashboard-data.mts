@@ -98,7 +98,7 @@ for (const e of recentEvents) {
 }
 
 const totalSlashes = events.filter(e => e.outcome === 'slashed').length;
-const totalJobs = events.length;
+const totalJobs = Math.max(...events.map(e => parseInt(e.jobId, 10))); // latest on-chain job number (BondHook sequential id)
 const latestSlash = events.filter(e => e.outcome === 'slashed').slice(-1)[0] ?? null;
 
 // ── Conditional contracts (separate escrow, separate state file) ──────
@@ -137,4 +137,4 @@ const out = {
   generatedAt: new Date().toISOString(),
 };
 fs.writeFileSync('public/data.json', JSON.stringify(out, null, 2));
-console.log(`wrote public/data.json: ${providers.length} providers, ${jobs.length} jobs shown (of ${totalJobs} total events), ${totalSlashes} slashes (latest: job#${latestSlash?.jobId}), ${conditionalJobs.length} conditional contracts`);
+console.log(`wrote public/data.json: ${providers.length} providers, ${jobs.length} jobs shown (latest job #${totalJobs}), ${totalSlashes} slashes (latest: job#${latestSlash?.jobId}), ${conditionalJobs.length} conditional contracts`);
