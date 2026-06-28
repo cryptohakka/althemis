@@ -329,7 +329,7 @@
     return Math.floor(h / 24) + 'd ago';
   }
   function outcomeBadge(outcome, phase) {
-    const phaseTag = phase ? `<span class="ph">phase ${phase}</span>` : '';
+    const phaseTag = ''; // phase A/B is internal pipeline staging — not surfaced in the UI
     if (outcome === 'verified' && phase === 'A') {
       return `<span class="st pending">Verifying…</span>${phaseTag}`;
     }
