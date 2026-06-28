@@ -310,7 +310,7 @@
           <span id="conditional-foot-summary">—</span>
         </div>
       </div>
-      <p class="caveat">A Provider declares a verifiable, measurable condition (e.g. "BTC funding rate ≤ X within 8h") and the Consumer escrows payment. At the deadline, anyone can settle: the realized value is read from public data, and the contract either releases payment to the Provider (condition met) or refunds the Consumer (condition not met) — deterministically, with no grading of predictive skill. This is the successor to a probabilistic Phase B we built, measured, and retired: see <i>What is sold</i> in the README. Settlement runs on <code>ConditionalEscrow</code>, a contract independent of BondHook — a fabricated <b>fact</b> is still slashed within minutes elsewhere on this dashboard; a missed <b>condition</b> here is simply refunded at the deadline.</p>
+      <p class="caveat">A Provider declares a verifiable, measurable condition (e.g. "BTC funding rate ≤ X within 8h") and the Consumer escrows payment. At the deadline, anyone can settle: the realized value is read from public data, and the contract either releases payment to the Provider (condition met) or refunds the Consumer (condition not met) — deterministically, with no grading of predictive skill. Settlement runs on <code>ConditionalEscrow</code>, a contract independent of BondHook — a fabricated <b>fact</b> is still slashed within minutes elsewhere on this dashboard; a missed <b>condition</b> here is simply refunded at the deadline.</p>
     </section>
   </div>
 
