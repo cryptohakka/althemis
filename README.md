@@ -2,11 +2,11 @@
 
 [![CI](https://github.com/cryptohakka/althemis/actions/workflows/ci.yml/badge.svg)](https://github.com/cryptohakka/althemis/actions/workflows/ci.yml)
 
-**An A2A signal marketplace that punishes fabricated facts and settles predictions as contracts — never grading either by opinion.**
+**An A2A signal marketplace that slashes fabricated facts and settles forecasts as bonded conditional commitments — never grading either by opinion.**
 
-> **TL;DR** — Agents sell market signals under USDC bonds on Arc Testnet. A fabricated **fact** gets the bond **slashed 100% on-chain, autonomously**, within minutes. A **prediction** is sold as a *conditional contract*: the Provider declares a verifiable threshold, the Consumer escrows payment, and at the deadline the realized value — read from public data — either releases payment or refunds the Consumer. No prediction is ever "graded" for skill. The honest autonomous loop runs at **0.001 USDC per job**. **A Provider can be wrong and survive; a Provider cannot lie and survive — and "wrong" costs the Provider its fee, never the Consumer's money.**
+> **TL;DR** — Agents sell market signals under USDC bonds on Arc Testnet. A fabricated **fact** gets the bond **slashed 100% on-chain, autonomously**, within minutes. A **forecast** is sold as a *bonded conditional commitment*: the Provider posts a **reserve** behind a verifiable threshold, a Consumer pays a **premium** to buy a claim on it, and at the deadline the realized value — read from public data — either returns the reserve to the Provider (condition **met**) or pays it out to the Consumer (condition **missed**), the Provider keeping the premium either way. No forecast is ever "graded" for skill. The honest autonomous loop runs at **0.001 USDC per job**. **A Provider can be wrong and survive; a Provider cannot lie and survive — a miss is a loss, not a lie, and it is settled, not slashed.**
 
-Althemis (AI + Themis) is an agent-to-agent marketplace where autonomous **Providers** sell market signals (funding rate, open interest, regime) under USDC bonds, **Consumers** purchase and integrate them via a multi-agent Council, and an on-chain escrow + price oracle settles outcomes — slashing fabricated data and settling predictions as deterministic conditional contracts.
+Althemis (AI + Themis) is an agent-to-agent marketplace where autonomous **Providers** sell market signals (funding rate, open interest, regime) under USDC bonds, **Consumers** purchase and integrate them via a multi-agent Council, and an on-chain bond + price oracle settles outcomes — slashing fabricated data and settling forecasts as deterministic bonded conditional commitments, where a Provider posts a reserve and a Consumer buys a claim on it.
 
 Runs live on **Arc Testnet** (Circle), settled in USDC.
 
@@ -20,7 +20,7 @@ slashed, never even graded, but settled as a contract against public data.
 The novelty is the boundary, enforced by falsification discipline against our
 own signal, not just our competitors'.
 
-**[Demo Video](<URL>)** · **[Live Dashboard](https://althemis.a2aflow.space)** · **One-command repro:** `forge test` (43/43 passing: BondHook 31 + ConditionalEscrow 12)
+**[Demo Video](<URL>)** · **[Live Dashboard](https://althemis.a2aflow.space)** · **One-command repro:** `forge test` (50/50 passing: BondHook 31 + ConditionalEscrow 19)
 
 **Proof:** autonomous slash on Arc Testnet — [`0x021e0422...`](https://testnet.arcscan.app/tx/0x021e0422d5752137eabdf3c1d0d90d93cfb71856216790230bdeb2c8cd44a8a8)
 
@@ -39,16 +39,16 @@ Most "slashing for bad signals" designs conflate two different failures:
 1. **Lying about facts** — reporting a funding rate no exchange printed. Verifiable *at issuance*, and it deserves hard, deterministic punishment.
 2. **Being wrong about the future** — a prediction that didn't pan out. Markets are stochastic; punishing variance teaches Providers to stop making bold calls, not to be honest.
 
-The first version of Althemis drew this line and then made a second, quieter claim: that an honest-but-wrong prediction should move a **probabilistic skill score**. We built that scorer, measured it, and retired it (see *How we falsified our own product*). What replaced it is not a better scorer — it is the deletion of scoring as a step. A prediction is now sold as a **conditional contract**: the Provider states a measurable condition, and the contract settles it deterministically against public data. Met → the Provider is paid. Not met → the Consumer is refunded. The protocol verifies *the condition*, never *the quality of the inference*.
+The first version of Althemis drew this line and then made a second, quieter claim: that an honest-but-wrong forecast should move a **probabilistic skill score**. We built that scorer, measured it, and retired it (see *How we falsified our own product*). What replaced it is not a better scorer — it is the deletion of scoring as a step. A forecast is now sold as a **bonded conditional commitment**: the Provider posts a reserve behind a measurable condition, a Consumer pays a premium to buy a claim on it, and the contract settles it deterministically against public data. Met → the reserve returns to the Provider, which also keeps the premium. Missed → the reserve pays out to the Consumer, the Provider still keeping the premium. The protocol verifies *the condition*, never *the quality of the inference*.
 
 | Layer | What it claims | Verification | Consequence |
 |---|---|---|---|
 | **Attestation** | A fact at issuance ("BTC FR is X right now") | Immediate, vs 6-CEX median ± MAD | Fabrication → **100% bond slash**, within minutes |
-| **Conditional contract** | A measurable future condition ("FR ≤ X within 8h") | At the deadline, vs the same public data | Condition met → **release**; not met → **refund**. No slash, no score. |
+| **Bonded conditional commitment** | A measurable future condition ("FR ≤ X within 8h") | At the deadline, vs the same public data | Met → **reserve returns** to Provider; missed → **reserve pays out** to Consumer. No slash, no score. |
 
-A Provider can be wrong and survive — being wrong simply refunds the buyer. A Provider cannot lie and survive — a fabricated input is slashed regardless of any condition. **Althemis insures honesty, not alpha.**
+A Provider can be wrong and survive — a missed condition simply pays its reserve out to the buyer, no slash, no score. A Provider cannot lie and survive — a fabricated input is slashed regardless of any condition. **Althemis bonds honesty, not alpha.**
 
-The two failures settle on different clocks: a lie returns your money fast (Phase A slashes within minutes, no waiting for the prediction window); a missed prediction returns your money on schedule (the conditional contract refunds at the deadline — no slash, no penalty beyond losing the sale). Different harms, different remedies, but the Consumer is made whole either way.
+The two failures settle on different clocks: a lie makes the Consumer whole fast (Phase A slashes within minutes, returning 100% of the price, no waiting for the forecast window); a missed forecast pays out on schedule (the commitment releases the reserve to the Consumer at the deadline — no slash, the Provider keeping only the premium it was paid). Different harms, different remedies: a lie is punished, a miss is covered.
 
 **One principle ties the two layers together — input integrity.** A conditional contract is only meaningful if the facts it is built on were themselves verifiable. The condition is measured against the *same* attested, Phase-A-checked public data that the slash layer polices. A Provider cannot declare a condition over a fabricated feed: the fact layer is slashable, so the contract layer inherits its integrity.
 
@@ -82,26 +82,26 @@ Althemis sells two things, and is precise about which is which.
 
 **A fact, under bond.** A Provider attests "BTC funding rate is X right now." This is checkable immediately against six public exchanges. If it's fabricated, the bond is slashed 100%, on-chain, autonomously, within minutes. This is the slash layer, and it is unchanged from day one.
 
-**A condition, under escrow.** A Provider declares "BTC funding rate will be ≤ X within 8 hours." The Consumer escrows the price. At the deadline, anyone can settle: the realized funding rate is read from `ConditionalPriceFeed` (the same 6-CEX median the slash layer uses), and `ConditionalEscrow` either releases the escrow to the Provider (condition met) or refunds the Consumer (condition not met). This is settlement by public fact, not by judgement. Predictions are sold as **contracts, not forecasts** — which is what lets "honesty market, not prediction market" be literally true rather than a slogan.
+**A condition, under bond.** A Provider declares "BTC funding rate will be ≤ X within 8 hours" and posts a **reserve** behind it. A Consumer pays a **premium** to buy a claim on that reserve. At the deadline, anyone can settle: the realized funding rate is read from `ConditionalPriceFeed` (the same 6-CEX median the slash layer uses), and `ConditionalEscrow` either returns the reserve to the Provider (condition met) or pays the reserve out to the Consumer (condition missed) — the Provider keeping the premium either way. This is settlement by public fact, not by judgement. Forecasts are sold as **bonded conditional commitments** — which is what lets "an honesty market, settled by public fact" be literally true rather than a slogan.
 
 ### Why a contract, not a score
 
-The retired Phase B tried to *grade* predictions — score directional calls, accumulate a win rate, discount the bond for "skilled" Providers. The conditional contract fixes structurally what that mechanism never could tune around: no skill signal to defend (ours didn't survive scrutiny, see above), no protocol opinion to be wrong about, and a missed condition refunds the buyer instead of costing them — zero downside on a wrong call, by construction.
+The retired Phase B tried to *grade* forecasts — score directional calls, accumulate a win rate, discount the bond for "skilled" Providers. The bonded conditional commitment fixes structurally what that mechanism never could tune around: no skill signal to defend (ours didn't survive scrutiny, see above), no protocol opinion to be wrong about, and a missed condition pays the reserve out to the buyer instead of leaving it exposed — the buyer's downside is capped at the premium, by construction.
 
 ### What's deployed
 
-Two contracts, independent of the BondHook/ERC-8183 suite (own escrow, no shared state):
+Two contracts, independent of the BondHook/ERC-8183 suite (own bond escrow, no shared state):
 
 | Contract | Address (Arc Testnet) | Role |
 |---|---|---|
-| `ConditionalPriceFeed` | [`0xe7d75660…`](https://testnet.arcscan.app/address/0xe7d75660F94B95C53469aFdbF6eFCE13898D05d1) | Single-oracle, write-once realized-value feed (same 6-CEX trust model as Phase A) |
-| `ConditionalEscrow` | [`0x922f78C9…`](https://testnet.arcscan.app/address/0x922f78C91ae7119a50d84bF493E5298B65b38068) | `commit` → permissionless `settle` → release / refund |
+| `ConditionalPriceFeed` | [`0x1793c8c7…`](https://testnet.arcscan.app/address/0x1793c8c7c28ca1fa0a29af1f34973d9e23d9a88d) | Single-oracle, write-once realized-value feed (same 6-CEX trust model as Phase A) |
+| `ConditionalEscrow` | [`0x8944f39f…`](https://testnet.arcscan.app/address/0x8944f39f37d4a6cba0c36bdfff74f4c911fd14a9) | `declare`(reserve) → `purchase`(premium) → permissionless `settle` → met: reserve returns / missed: reserve pays out |
 
-**Self-dealing is structurally impossible, not policed.** The Provider signs only the *declaration* — `(asset, window, op, expected)` — never the settlement target or calldata. `ConditionalEscrow` builds the comparison itself from enumerable parameters (`asset ∈ {BTC}`, `window ∈ {8,16,24}h`, `op ∈ {GTE,LTE}`). A Provider cannot point the contract at a value of its choosing; it can only state a threshold and a direction. [12 Foundry tests](contracts/test/ConditionalEscrow.t.sol) cover release/refund in both directions, the feed-not-ready hold, signature/parameter-mismatch rejection, and boundary inclusivity; the existing BondHook suite is unchanged — **43/43 total**.
+**Self-dealing is structurally impossible, not policed.** The Provider signs only the *declaration* — `(asset, window, op, expected)` — never the settlement target or calldata. `ConditionalEscrow` builds the comparison itself from enumerable parameters (`asset ∈ {BTC}`, `window ∈ {8,16,24}h`, `op ∈ {GTE,LTE}`). A Provider cannot point the contract at a value of its choosing; it can only state a threshold and a direction. [19 Foundry tests](contracts/test/ConditionalEscrow.t.sol) cover met-release and missed-payout in both directions, the unpurchased-withdraw path, the feed-not-ready hold, signature/parameter-mismatch rejection, and boundary inclusivity; the existing BondHook suite is unchanged — **50/50 total**.
 
-**v1 is intentionally minimal:** no fee, no bond, no challenger on the conditional layer. Settlement is deterministic and re-derivable from public data, so a full release or full refund needs no dispute path. If the feed is not yet posted at the deadline, the escrow **holds** — it never defaults to a payout. Fee economics and a feed-value challenge path are on the roadmap.
+**v1 is intentionally minimal:** no protocol fee and no challenger on the conditional layer (the Provider still posts a reserve — that is the bond). Settlement is deterministic and re-derivable from public data, so a met-release or a missed-payout needs no dispute path. If the feed is not yet posted at the deadline, settlement **holds** — it never defaults to a payout. Fee economics and a feed-value challenge path are on the roadmap.
 
-**Buyer-facing reputation: Fulfillment, not Skill.** A Provider's declared-condition fulfillment rate (release ÷ total settled) is a deterministic, public ratio — the honest successor to the retired skill score, for *display* only. It is never wired into the bond rate: bond economics depend on Reliability alone, so a Provider cannot buy a cheaper bond by making easy calls. This is the same trap the skill discount fell into, avoided structurally.
+**Buyer-facing reputation: Fulfillment, not Skill.** A Provider's declared-condition fulfillment rate (met ÷ total settled) is a deterministic, public ratio — the honest successor to the retired skill score, for *display* only. It is never wired into the bond rate: bond economics depend on Reliability alone, so a Provider cannot buy a cheaper bond by making easy calls. This is the same trap the skill discount fell into, avoided structurally.
 
 ## Architecture
 
@@ -122,14 +122,14 @@ Provider (FR / OI / Regime)          Consumer (Council)
    (fabrication → SLASH)          (verified count → bond rate)
 
    ─────────────────────────────────────────────────────────
-   Conditional contract layer (independent escrow)
+   Bonded conditional commitment layer (independent escrow)
         Provider declares (asset, window, op, expected)
                           │
                           ▼
-        ConditionalEscrow ── commit → settle (permissionless)
-                          │         realized value from
-                          ▼         ConditionalPriceFeed (6-CEX)
-                 release (met) / refund (not met)
+        ConditionalEscrow ── declare → purchase → settle (permissionless)
+                          │         provider posts reserve, consumer pays premium;
+                          ▼         realized value from ConditionalPriceFeed (6-CEX)
+              met: reserve returns / missed: reserve pays out
 ```
 
 ### Roles
@@ -137,7 +137,7 @@ Provider (FR / OI / Regime)          Consumer (Council)
 - **Provider** — sells signals. Onboards in a single transaction (bond + registry). Posts a USDC bond whose required ratio depends on Reliability tier (see below). New Providers are capped at 1 USDC exposure for their first 10 jobs.
 - **Consumer** — buys signals and integrates them through a Triple-A Council (Architect / Auditor / Arbiter debate) before acting. Payment = participation; no separate registration step.
 - **Adjudicator** — operator-run in v1; invoked **only** on disputes, which are restricted to attestation fraud claims. Dispute filing in v1 goes through the operator; permissionless filing (with a filer bond equal to 50% of the Provider's bond, to deter spam) ships in v2 together with the filer reward.
-- **Price Oracle** — Phase A, plus the conditional settlement loop. **Phase A (attestation)**: within 15 minutes of submission, verifies the attested value against the 6-CEX median ± MAD; the fabrication threshold is `max(3×MAD, 0.0001)`. Requires a 4-of-6 CEX quorum — below quorum it retries, and if the verification window expires the job is marked **unverifiable** and settles COMPLETE with no slash and no tier impact. **Conditional settlement**: it discovers `Committed` jobs, posts the realized value to `ConditionalPriceFeed` at the deadline, and calls the permissionless `settle`. This loop is fault-isolated — an RPC failure in the conditional path can never crash Phase A.
+- **Price Oracle** — Phase A, plus the conditional settlement loop. **Phase A (attestation)**: within 15 minutes of submission, verifies the attested value against the 6-CEX median ± MAD; the fabrication threshold is `max(3×MAD, 0.0001)`. Requires a 4-of-6 CEX quorum — below quorum it retries, and if the verification window expires the job is marked **unverifiable** and settles COMPLETE with no slash and no tier impact. **Conditional settlement**: it indexes `Declared` and `Purchased` jobs, posts the realized value to `ConditionalPriceFeed` at the deadline, and calls the permissionless `settle` (or `withdraw` for a commitment no buyer purchased). This loop is fault-isolated — an RPC failure in the conditional path can never crash Phase A.
 
 ### Signal types & settlement rules
 
@@ -189,7 +189,7 @@ that must remain reproducible and deterministic.
 
 ## Confidential Signal Commissioning (x402, Arc/Circle Gateway)
 
-**What this is, and what it is not yet.** The confidential tier below is a working **mechanism demonstration** of x402-commissioned, commit-hash-on-chain signal delivery — the full Circle Gateway payment loop, the embargo, and the on-chain Memo index all run end-to-end. What it is *not* yet is a product: hiding a *public* funding rate behind a commit-hash has little standalone value. Confidentiality earns its keep when paired with the **conditional contract** — hiding a Provider's *proprietary condition* (e.g. a large-execution threshold, or a bet from a private model) so it cannot be front-run or imitated before the deadline. Because a missed condition refunds the buyer, a buyer can pay for a sealed condition without first seeing it — which is what dissolves the information paradox that normally blocks selling un-inspectable predictions. That pairing is on the roadmap; what's shipped today is the commissioning mechanism it will run on.
+**What this is, and what it is not yet.** The confidential tier below is a working **mechanism demonstration** of x402-commissioned, commit-hash-on-chain signal delivery — the full Circle Gateway payment loop, the embargo, and the on-chain Memo index all run end-to-end. What it is *not* yet is a product: hiding a *public* funding rate behind a commit-hash has little standalone value. Confidentiality earns its keep when paired with the **conditional contract** — hiding a Provider's *proprietary condition* (e.g. a large-execution threshold, or a bet from a private model) so it cannot be front-run or imitated before the deadline. Because a missed condition pays the reserve out to the buyer, a buyer can pay a premium for a sealed condition without first seeing it — the reserve, not the disclosed condition, is what backs the claim, which is what dissolves the information paradox that normally blocks selling un-inspectable forecasts. That pairing is on the roadmap; what's shipped today is the commissioning mechanism it will run on.
 
 Every Provider chooses its commissioning type **at registration** — `open` (raw value published on-chain immediately) or `confidential` (only a commit-hash on-chain, raw value under embargo until settlement). A Provider is one or the other; it is a property of the Provider, not a per-request toggle. The autonomous roster (PCHEAP/PHONEST/PLIAR) are open-type Providers driven by the tick loop; **PCONF is the first confidential-type Provider**, commissioned over HTTP via Circle's x402 Gateway batching SDK.
 
@@ -248,10 +248,10 @@ PCONF is never in `ROSTER_ROLES` / `getActiveRoles` under any `ROLLOUT_PHASE`. A
 - ✅ End-to-end slash flow verified on Arc Testnet: an honest attestation passes Phase A (Reliability +1), and a fabricated attestation is detected and SLASHED 100% of bond, resetting Reliability to zero.
 - ✅ **The oracle slashes autonomously.** Phase A reaches its verdict from a 6-CEX median with a deterministic threshold and submits the on-chain `reject` itself — no external price oracle, no human in the slash path. The fabrication verdict is reproducible: the same CEX quorum and threshold yield the same outcome on replay.
 - ✅ Live slash on Arc Testnet (BondHook `0xc522095eb7ddaa9b67ca735eebedc073370a5f5f`): a fabricated `FR_BTC_8h=0.005;z=99` was caught against a 6-CEX median of `~0` (`diff=5.0e-3` > threshold `1.07e-4`, quorum 6/6) and slashed: [`0x021e0422...`](https://testnet.arcscan.app/tx/0x021e0422d5752137eabdf3c1d0d90d93cfb71856216790230bdeb2c8cd44a8a8). The provider's `verifiedCount` reset `1 -> 0`, returning the bond rate to the `20000` bps default.
-- ✅ **Conditional contract layer deployed and wired.** `ConditionalPriceFeed` and `ConditionalEscrow` are live on Arc Testnet (addresses above), with 12 Foundry tests passing and the existing BondHook suite unchanged (43/43). The oracle discovers `Committed` jobs, posts realized values at the deadline, and settles permissionlessly; the provider side (`PCHEAP`) declares a condition from its FR signal whenever direction is non-neutral, and the dashboard renders the conditional ledger.
-- ✅ **First organic conditional settlement captured.** PCHEAP declared `FR(BTC,8h) ≤ -54` against a live Consumer escrow (job [`0xefa1422...`](https://testnet.arcscan.app/tx/0xf4c886845b07a53ed35eb69d3f8f0f12b625c2b3341282d2a2a535d6df059a7d)); the realized rate posted at `+23`, the condition was not met, and `ConditionalEscrow` autonomously refunded the Consumer — [`0xd380b1c4...`](https://testnet.arcscan.app/tx/0xd380b1c431b3e3b714d7773c2d62101f759971f965317a590c9d16a2431def41). No operator action: the provider declared, the market moved against it, the contract settled.
+- ✅ **Conditional contract layer deployed and wired.** `ConditionalPriceFeed` and `ConditionalEscrow` are live on Arc Testnet (addresses above), with 19 Foundry tests passing and the existing BondHook suite unchanged (50/50). The oracle indexes `Declared`/`Purchased` jobs, posts realized values at the deadline, and settles (or withdraws unpurchased commitments) permissionlessly; the provider side (`PCHEAP`) posts a reserve behind a condition from its FR signal whenever direction is non-neutral, `CBUYER` buys the claim, and the dashboard renders the conditional ledger.
+- ✅ **Conditional layer running organically, end-to-end.** PCHEAP autonomously posts a reserve behind a short condition (`FR ≤ X within 8h`); CBUYER purchases the claim; at the 8h deadline the realized FR is read from public data and `ConditionalEscrow` settles each commitment deterministically — reserve returned to the Provider on a met condition, paid out to the Consumer on a missed one, with the Provider keeping the premium either way. No operator action in the loop: the Provider declares and bonds, the market moves, the contract settles. <!-- ORGANIC_PROOF: declare / purchase / settle txs --> `<organic proof txs pending>`
 - ✅ Automated pipeline under systemd: `althemis.service` (Council consumer cycle + Provider job submission + conditional declaration) and `althemis-oracle.service` (Phase A + conditional settlement) run unattended, with state persisted across restarts.
-- ✅ `BondHook.sol` Foundry suite: 31 tests — bond lock/unlock/withdraw, `beforeFund` coverage + new-provider caps, two-axis bond rate (Reliability sets bps, retired Skill discount + 110% floor), 3-way slash distribution (consumer 100% / challenger 10% / treasury remainder) with event/balance assertions, and the non-slash reject path. `ConditionalEscrow.sol` suite: 12 tests — release/refund × GTE/LTE, feed-not-ready hold, signature & parameter-mismatch rejection, double-commit/settle guards, boundary inclusivity. Run with `forge test` (43/43).
+- ✅ `BondHook.sol` Foundry suite: 31 tests — bond lock/unlock/withdraw, `beforeFund` coverage + new-provider caps, two-axis bond rate (Reliability sets bps, retired Skill discount + 110% floor), 3-way slash distribution (consumer 100% / challenger 10% / treasury remainder) with event/balance assertions, and the non-slash reject path. `ConditionalEscrow.sol` suite: 19 tests — met-release/missed-payout × GTE/LTE, unpurchased-withdraw, feed-not-ready hold, signature & parameter-mismatch rejection, double-purchase/settle guards, boundary inclusivity. Run with `forge test` (50/50).
 - ✅ Live dashboard at [`althemis.a2aflow.space`](https://althemis.a2aflow.space), rendering the real roster (PCHEAP/PHONEST/PLIAR/PCONF), recent oracle events, and the conditional-contract ledger from a static `data.json` generated every 5 minutes by a systemd timer — no mock data.
 - 🔜 Public Provider onboarding (external, non-operator participants).
 
@@ -260,7 +260,7 @@ PCONF is never in `ROSTER_ROLES` / `getActiveRoles` under any `ROLLOUT_PHASE`. A
 Althemis is a hackathon submission, and we hold ourselves to the same falsification discipline the protocol enforces on its Providers. Rather than dress up a single-operator demo as organic traction, we state plainly what is real, what is operator-driven, and what does not exist yet.
 
 **Layer 1 — The protocol (real, immutable, independently verifiable).**
-`BondHook.sol`, the Reliability tier engine, the 3-way slash distribution, the 110% floor, the autonomous Phase A oracle, and the `ConditionalEscrow`/`ConditionalPriceFeed` pair are all on-chain on Arc Testnet. Anyone can `cast call` the contracts, replay the 6-CEX quorum, or re-run `forge test` (43/43) against this repo. None of this can be faked or quietly edited — the slash logic that burns a fabricator's bond is the same code path whether the fabricator is the operator or a stranger.
+`BondHook.sol`, the Reliability tier engine, the 3-way slash distribution, the 110% floor, the autonomous Phase A oracle, and the `ConditionalEscrow`/`ConditionalPriceFeed` pair are all on-chain on Arc Testnet. Anyone can `cast call` the contracts, replay the 6-CEX quorum, or re-run `forge test` (50/50) against this repo. None of this can be faked or quietly edited — the slash logic that burns a fabricator's bond is the same code path whether the fabricator is the operator or a stranger.
 
 **Layer 2 — The operator demonstration (real transactions, single operator playing a roster).**
 The live agents that populate the market are run by the operator, but as a **roster of independent wallets with distinct, hard-coded honesty policies** — not a single self-dealing pair. The honest provider (`PCHEAP`) always reports the true 6-CEX signal; a deliberately dishonest provider (`PLIAR`) fabricates a fraction of the time. The full Reliability axis has been exercised end-to-end on-chain: a provider climbs **Bronze → Silver → Gold** purely by accumulating verified attestations, and a fabricated attestation is caught by the oracle and slashed autonomously, resetting that provider to Bronze. Crucially, this demonstration is **operator-adverse**: when `PLIAR` lies and gets slashed, it is the operator's own bond that burns. We are not staging wins — we are staging an honest distribution of outcomes, losses included, because that is the only thing the protocol actually claims to guarantee.
@@ -290,8 +290,8 @@ There are no independent third-party Providers or Consumers on the marketplace t
 
 ### Roadmap
 
-1. ✅ Foundry suites: `BondHook.sol` (31) + `ConditionalEscrow.sol` (12) — **done, 43 passing**
-2. ✅ Conditional contract layer (deploy + oracle settlement + provider declaration + dashboard) — **done; first organic settlement captured (refund)**
+1. ✅ Foundry suites: `BondHook.sol` (31) + `ConditionalEscrow.sol` (19) — **done, 50 passing**
+2. ✅ Conditional contract layer (deploy + oracle settlement + provider declaration + dashboard) — **done; declare→purchase→settle running organically end-to-end**
 3. Confidential × conditional: sealed proprietary conditions (the pairing that makes confidentiality a product)
 4. Conditional fee economics + feed-value challenge path + shorter windows
 5. Public Provider onboarding (external, non-operator participants)
