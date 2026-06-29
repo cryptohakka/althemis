@@ -159,6 +159,7 @@
   .jnote{font-size:11.5px;color:var(--muted);font-family:"JetBrains Mono",monospace}
   .ph{font-size:10.5px;color:var(--muted);margin-left:6px;opacity:.7}
   .conf-tag{display:inline-block;margin-left:7px;font-size:9.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#a78bfa;background:rgba(167,139,250,.12);border:1px solid rgba(167,139,250,.3);padding:1px 6px;border-radius:5px;vertical-align:middle}
+  .x402-tag{display:inline-block;margin-left:5px;font-size:9.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#2dd4bf;background:rgba(45,212,191,.12);border:1px solid rgba(45,212,191,.3);padding:1px 6px;border-radius:5px;vertical-align:middle}
   .jnote a{color:var(--blue-bright);text-decoration:none} .jnote a:hover{text-decoration:underline}
   .jnote .ver{color:var(--teal)} .jnote .ch{color:var(--amber);cursor:pointer}
   .led-foot{padding:13px 18px;font-size:12px;color:var(--muted);border-top:1px solid var(--line);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
@@ -384,7 +385,7 @@
       return `
         <tr>
           <td><span class="rank ${i===0?'top':''}">${i+1}</span></td>
-          <td><div class="prov"><span class="h">${p.name}${p.commissionType==='confidential'?'<span class="conf-tag">confidential</span>':''}</span><span class="a mono">${fmtAddr(p.address)}</span></div></td>
+          <td><div class="prov"><span class="h">${p.name}${p.commissionType==='confidential'?'<span class="conf-tag">confidential</span><span class="x402-tag">x402</span>':''}</span><span class="a mono">${fmtAddr(p.address)}</span></div></td>
           <td><span class="sigtype">${p.signalType ?? 'FR'}</span></td>
           <td class="sep"><span class="tier ${tierCls}">${p.reliabilityTier}</span></td>
           <td><span class="verified${p.verifiedCount<10?' low':''}"><span class="ck">✓</span>${p.verifiedCount}</span></td>
