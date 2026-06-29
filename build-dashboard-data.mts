@@ -109,8 +109,9 @@ const latestSlash = events.filter(e => e.outcome === 'slashed').slice(-1)[0] ?? 
 // ── Conditional contracts (separate escrow, separate state file) ──────
 // Predictions sold as conditional contracts, not graded forecasts — the
 // deterministic successor to the abandoned probabilistic Phase B. A
-// Provider declares a verifiable threshold; outcome is read from public
-// data at the deadline (released/refunded), never scored as predictive skill.
+// Provider declares a bonded condition; a consumer buys the claim. At the
+// deadline outcome is read from public data (released/paidout/withdrawn),
+// never scored as predictive skill.
 const ASSET_NAMES: Record<number, string> = { 0: 'BTC' };
 const OP_NAMES: Record<number, string> = { 0: 'GTE', 1: 'LTE' };
 let conditionalJobs: any[] = [];
@@ -128,7 +129,9 @@ try {
       settled: j.settled,
       outcome: j.outcome ?? 'pending',
       realized: j.realized ?? null,
-      amount: j.amount ?? null,
+      bond: j.bond ?? null,
+      premium: j.premium ?? null,
+      purchased: j.purchased ?? false,
     }))
     .sort((a: any, b: any) => b.deadline - a.deadline);
 } catch {
