@@ -35,8 +35,9 @@ contract ConditionalEscrowTest is Test {
     uint256 providerPk = 0xBEEF;
     address provider;
 
-    uint256 constant AMOUNT = 5e4; // 0.05 USDC (6 decimals)
-    uint8   constant ASSET  = 0;   // ASSET_BTC
+    uint256 constant BOND    = 5e5; // 0.5 USDC payout if condition misses
+    uint256 constant PREMIUM = 5e4; // 0.05 USDC cost of the claim
+    uint8   constant ASSET   = 0;   // ASSET_BTC
 
     function setUp() public {
         provider = vm.addr(providerPk);
@@ -45,7 +46,11 @@ contract ConditionalEscrowTest is Test {
         feed = new ConditionalPriceFeed(admin, oracle);
         escrow = new ConditionalEscrow(address(usdc), address(feed));
 
-        usdc.mint(consumer, 1e6);
+        // Both sides are funded and approve the escrow.
+        usdc.mint(provider, 1e7);
+        usdc.mint(consumer, 1e7);
+        vm.prank(provider);
+        usdc.approve(address(escrow), type(uint256).max);
         vm.prank(consumer);
         usdc.approve(address(escrow), type(uint256).max);
     }
@@ -60,150 +65,237 @@ contract ConditionalEscrowTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    function _commit(bytes32 jobId, uint8 window, ConditionalEscrow.Op op, int256 expected)
+    // Provider declares + bonds. Provider is msg.sender.
+    function _declare(bytes32 jobId, uint8 window, ConditionalEscrow.Op op, int256 expected)
         internal
     {
         bytes memory sig = _sign(window, op, expected);
+        vm.prank(provider);
+        escrow.declare(jobId, ASSET, window, op, expected, BOND, PREMIUM, sig);
+    }
+
+    // Consumer buys the claim by paying the premium.
+    function _purchase(bytes32 jobId) internal {
         vm.prank(consumer);
-        escrow.commit(jobId, provider, ASSET, window, op, expected, AMOUNT, sig);
+        escrow.purchase(jobId);
+    }
+
+    // Declare + purchase in one helper for settlement tests.
+    function _open(bytes32 jobId, uint8 window, ConditionalEscrow.Op op, int256 expected) internal {
+        _declare(jobId, window, op, expected);
+        _purchase(jobId);
     }
 
     // Post the realized feed value for a job's settlement key.
+    // jobs() tuple: provider, consumer, bond, premium, asset, window, op, expected, deadline, status
     function _postRealized(bytes32 jobId, int256 realized) internal {
-        (, , , uint8 asset, uint8 window, , , uint64 deadline, ) = escrow.jobs(jobId);
+        (, , , , uint8 asset, uint8 window, , , uint64 deadline, ) = escrow.jobs(jobId);
         bytes32 key = feed.deriveKey(asset, window, deadline);
         vm.prank(oracle);
         feed.postValue(key, realized);
     }
 
-    // ── 1. release: LTE condition met ───────────────────────────
-    function test_Release_LTE_met() public {
+    function _status(bytes32 jobId) internal view returns (ConditionalEscrow.Status) {
+        (, , , , , , , , , ConditionalEscrow.Status st) = escrow.jobs(jobId);
+        return st;
+    }
+
+    // ── 1. met (LTE): provider keeps premium + recovers bond ────
+    function test_Met_LTE_providerKeepsPremiumAndBond() public {
         bytes32 jobId = keccak256("job1");
-        // "FR <= 0 after 8h"
-        _commit(jobId, 8, ConditionalEscrow.Op.LTE, 0);
+        uint256 provBefore = usdc.balanceOf(provider); // already paid BOND in declare
+        _open(jobId, 8, ConditionalEscrow.Op.LTE, 0); // "FR <= 0 after 8h"
+        // after declare(BOND) + purchase: provider is down BOND, consumer down PREMIUM
         vm.warp(block.timestamp + 8 hours + 1);
-        _postRealized(jobId, -5); // realized -5 <= 0 -> met -> release
+        _postRealized(jobId, -5); // -5 <= 0 -> met
         escrow.settle(jobId);
 
-        assertEq(usdc.balanceOf(provider), AMOUNT, "provider paid on release");
-        (, , , , , , , , ConditionalEscrow.Status st) = escrow.jobs(jobId);
-        assertEq(uint8(st), uint8(ConditionalEscrow.Status.Released));
+        // provider regains bond and gains premium => net +PREMIUM vs start
+        assertEq(usdc.balanceOf(provider), provBefore + PREMIUM, "provider net +premium");
+        assertEq(uint8(_status(jobId)), uint8(ConditionalEscrow.Status.Released));
     }
 
-    // ── 2. refund: LTE condition NOT met ────────────────────────
-    function test_Refund_LTE_notMet() public {
+    // ── 2. missed (LTE): consumer gets bond, provider keeps premium ─
+    function test_Missed_LTE_consumerGetsBond() public {
         bytes32 jobId = keccak256("job2");
-        _commit(jobId, 8, ConditionalEscrow.Op.LTE, 0);
+        uint256 provBefore = usdc.balanceOf(provider);
+        uint256 consBefore = usdc.balanceOf(consumer);
+        _open(jobId, 8, ConditionalEscrow.Op.LTE, 0);
         vm.warp(block.timestamp + 8 hours + 1);
-        _postRealized(jobId, 5); // 5 <= 0 false -> refund
-
-        uint256 before = usdc.balanceOf(consumer);
+        _postRealized(jobId, 5); // 5 <= 0 false -> missed
         escrow.settle(jobId);
 
-        assertEq(usdc.balanceOf(consumer), before + AMOUNT, "consumer refunded");
-        assertEq(usdc.balanceOf(provider), 0, "provider not paid");
-        (, , , , , , , , ConditionalEscrow.Status st) = escrow.jobs(jobId);
-        assertEq(uint8(st), uint8(ConditionalEscrow.Status.Refunded));
+        // consumer paid PREMIUM, receives BOND => net (BOND - PREMIUM)
+        assertEq(usdc.balanceOf(consumer), consBefore - PREMIUM + BOND, "consumer net +bond-premium");
+        // provider paid BOND, keeps PREMIUM => net (PREMIUM - BOND) ... i.e. lost bond, kept premium
+        assertEq(usdc.balanceOf(provider), provBefore - BOND + PREMIUM, "provider lost bond, kept premium");
+        assertEq(uint8(_status(jobId)), uint8(ConditionalEscrow.Status.PaidOut));
     }
 
-    // ── 3. release: GTE condition met ───────────────────────────
-    function test_Release_GTE_met() public {
+    // ── 3. met (GTE) ────────────────────────────────────────────
+    function test_Met_GTE() public {
         bytes32 jobId = keccak256("job3");
-        _commit(jobId, 16, ConditionalEscrow.Op.GTE, 10);
+        uint256 provBefore = usdc.balanceOf(provider);
+        _open(jobId, 16, ConditionalEscrow.Op.GTE, 10);
         vm.warp(block.timestamp + 16 hours + 1);
         _postRealized(jobId, 15); // 15 >= 10 -> met
         escrow.settle(jobId);
-        assertEq(usdc.balanceOf(provider), AMOUNT);
+        assertEq(usdc.balanceOf(provider), provBefore + PREMIUM);
     }
 
-    // ── 4. settle before deadline reverts ───────────────────────
-    function test_Settle_beforeDeadline_reverts() public {
+    // ── 4. no buyer by deadline: provider withdraws full bond ───
+    function test_Withdraw_noBuyer_providerRecoversBond() public {
         bytes32 jobId = keccak256("job4");
-        _commit(jobId, 8, ConditionalEscrow.Op.LTE, 0);
+        uint256 provBefore = usdc.balanceOf(provider);
+        _declare(jobId, 8, ConditionalEscrow.Op.LTE, 0); // declared, never purchased
+        assertEq(usdc.balanceOf(provider), provBefore - BOND, "bond locked");
+        vm.warp(block.timestamp + 8 hours + 1);
+        vm.prank(provider);
+        escrow.withdraw(jobId);
+        assertEq(usdc.balanceOf(provider), provBefore, "bond fully recovered");
+        assertEq(uint8(_status(jobId)), uint8(ConditionalEscrow.Status.Withdrawn));
+    }
+
+    // ── 5. withdraw before deadline reverts ─────────────────────
+    function test_Withdraw_beforeDeadline_reverts() public {
+        bytes32 jobId = keccak256("job5");
+        _declare(jobId, 8, ConditionalEscrow.Op.LTE, 0);
+        vm.expectRevert(abi.encodeWithSelector(ConditionalEscrow.BeforeDeadline.selector, jobId));
+        vm.prank(provider);
+        escrow.withdraw(jobId);
+    }
+
+    // ── 6. withdraw on a purchased job reverts (not Declared) ───
+    function test_Withdraw_afterPurchase_reverts() public {
+        bytes32 jobId = keccak256("job6");
+        _open(jobId, 8, ConditionalEscrow.Op.LTE, 0);
+        vm.warp(block.timestamp + 8 hours + 1);
+        vm.expectRevert(abi.encodeWithSelector(ConditionalEscrow.NotDeclared.selector, jobId));
+        vm.prank(provider);
+        escrow.withdraw(jobId);
+    }
+
+    // ── 7. settle before deadline reverts ───────────────────────
+    function test_Settle_beforeDeadline_reverts() public {
+        bytes32 jobId = keccak256("job7");
+        _open(jobId, 8, ConditionalEscrow.Op.LTE, 0);
         _postRealized(jobId, -1);
         vm.expectRevert(abi.encodeWithSelector(ConditionalEscrow.BeforeDeadline.selector, jobId));
         escrow.settle(jobId);
     }
 
-    // ── 5. feed not posted -> FeedNotReady (held, never defaults) ─
-    function test_Settle_feedNotReady_reverts() public {
-        bytes32 jobId = keccak256("job5");
-        _commit(jobId, 8, ConditionalEscrow.Op.LTE, 0);
+    // ── 8. settle on un-purchased job reverts (NotPurchased) ────
+    function test_Settle_notPurchased_reverts() public {
+        bytes32 jobId = keccak256("job8");
+        _declare(jobId, 8, ConditionalEscrow.Op.LTE, 0); // declared only
         vm.warp(block.timestamp + 8 hours + 1);
-        // no postValue
-        vm.expectRevert(abi.encodeWithSelector(ConditionalEscrow.FeedNotReady.selector, jobId));
+        _postRealized(jobId, -1);
+        vm.expectRevert(abi.encodeWithSelector(ConditionalEscrow.NotPurchased.selector, jobId));
         escrow.settle(jobId);
-        // funds still in escrow, no payout happened
-        assertEq(usdc.balanceOf(provider), 0);
     }
 
-    // ── 6a. wrong signer rejected ───────────────────────────────
-    function test_Commit_badSignature_wrongSigner() public {
-        bytes32 jobId = keccak256("job6");
-        // sign with a different key than `provider`
+    // ── 9. feed not posted -> FeedNotReady (held) ───────────────
+    function test_Settle_feedNotReady_reverts() public {
+        bytes32 jobId = keccak256("job9");
+        _open(jobId, 8, ConditionalEscrow.Op.LTE, 0);
+        vm.warp(block.timestamp + 8 hours + 1);
+        vm.expectRevert(abi.encodeWithSelector(ConditionalEscrow.FeedNotReady.selector, jobId));
+        escrow.settle(jobId);
+    }
+
+    // ── 10. wrong signer rejected at declare ────────────────────
+    function test_Declare_badSignature_wrongSigner() public {
+        bytes32 jobId = keccak256("job10");
         bytes32 dh = escrow.declarationHash(ASSET, 8, ConditionalEscrow.Op.LTE, 0);
         bytes32 eth = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", dh));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(uint256(0xDEAD), eth);
         bytes memory badSig = abi.encodePacked(r, s, v);
-        vm.prank(consumer);
+        vm.prank(provider);
         vm.expectRevert(ConditionalEscrow.BadSignature.selector);
-        escrow.commit(jobId, provider, ASSET, 8, ConditionalEscrow.Op.LTE, 0, AMOUNT, badSig);
+        escrow.declare(jobId, ASSET, 8, ConditionalEscrow.Op.LTE, 0, BOND, PREMIUM, badSig);
     }
 
-    // ── 6b. signature over different params rejected (no craft) ──
-    function test_Commit_badSignature_paramMismatch() public {
-        bytes32 jobId = keccak256("job7");
-        // provider signs expected=0, but consumer tries to commit expected=99
-        bytes memory sig = _sign(8, ConditionalEscrow.Op.LTE, 0);
-        vm.prank(consumer);
-        vm.expectRevert(ConditionalEscrow.BadSignature.selector);
-        escrow.commit(jobId, provider, ASSET, 8, ConditionalEscrow.Op.LTE, 99, AMOUNT, sig);
-    }
-
-    // ── 7. unsupported window / asset rejected ──────────────────
-    function test_Commit_unsupportedWindow_reverts() public {
-        bytes32 jobId = keccak256("job8");
-        bytes memory sig = _sign(1, ConditionalEscrow.Op.LTE, 0); // 1h not allowed
-        vm.prank(consumer);
-        vm.expectRevert(abi.encodeWithSelector(ConditionalEscrow.UnsupportedWindow.selector, uint8(1)));
-        escrow.commit(jobId, provider, ASSET, 1, ConditionalEscrow.Op.LTE, 0, AMOUNT, sig);
-    }
-
-    function test_Commit_unsupportedAsset_reverts() public {
-        bytes32 jobId = keccak256("job9");
-        bytes memory sig = _sign(8, ConditionalEscrow.Op.LTE, 0);
-        vm.prank(consumer);
-        vm.expectRevert(abi.encodeWithSelector(ConditionalEscrow.UnsupportedAsset.selector, uint8(2)));
-        escrow.commit(jobId, provider, 2, 8, ConditionalEscrow.Op.LTE, 0, AMOUNT, sig);
-    }
-
-    // ── 8. double commit / double settle rejected ───────────────
-    function test_Commit_duplicate_reverts() public {
-        bytes32 jobId = keccak256("job10");
-        _commit(jobId, 8, ConditionalEscrow.Op.LTE, 0);
-        bytes memory sig = _sign(8, ConditionalEscrow.Op.LTE, 0);
-        vm.prank(consumer);
-        vm.expectRevert(abi.encodeWithSelector(ConditionalEscrow.JobExists.selector, jobId));
-        escrow.commit(jobId, provider, ASSET, 8, ConditionalEscrow.Op.LTE, 0, AMOUNT, sig);
-    }
-
-    function test_Settle_twice_reverts() public {
+    // ── 11. signature over different params rejected ────────────
+    function test_Declare_badSignature_paramMismatch() public {
         bytes32 jobId = keccak256("job11");
-        _commit(jobId, 8, ConditionalEscrow.Op.LTE, 0);
+        bytes memory sig = _sign(8, ConditionalEscrow.Op.LTE, 0); // signs expected=0
+        vm.prank(provider);
+        vm.expectRevert(ConditionalEscrow.BadSignature.selector);
+        escrow.declare(jobId, ASSET, 8, ConditionalEscrow.Op.LTE, 99, BOND, PREMIUM, sig); // commits 99
+    }
+
+    // ── 12. unsupported window / asset rejected ─────────────────
+    function test_Declare_unsupportedWindow_reverts() public {
+        bytes32 jobId = keccak256("job12");
+        bytes memory sig = _sign(1, ConditionalEscrow.Op.LTE, 0);
+        vm.prank(provider);
+        vm.expectRevert(abi.encodeWithSelector(ConditionalEscrow.UnsupportedWindow.selector, uint8(1)));
+        escrow.declare(jobId, ASSET, 1, ConditionalEscrow.Op.LTE, 0, BOND, PREMIUM, sig);
+    }
+
+    function test_Declare_unsupportedAsset_reverts() public {
+        bytes32 jobId = keccak256("job13");
+        bytes memory sig = _sign(8, ConditionalEscrow.Op.LTE, 0);
+        vm.prank(provider);
+        vm.expectRevert(abi.encodeWithSelector(ConditionalEscrow.UnsupportedAsset.selector, uint8(2)));
+        escrow.declare(jobId, 2, 8, ConditionalEscrow.Op.LTE, 0, BOND, PREMIUM, sig);
+    }
+
+    // ── 13. zero bond rejected ──────────────────────────────────
+    function test_Declare_zeroBond_reverts() public {
+        bytes32 jobId = keccak256("job14");
+        bytes memory sig = _sign(8, ConditionalEscrow.Op.LTE, 0);
+        vm.prank(provider);
+        vm.expectRevert(ConditionalEscrow.ZeroBond.selector);
+        escrow.declare(jobId, ASSET, 8, ConditionalEscrow.Op.LTE, 0, 0, PREMIUM, sig);
+    }
+
+    // ── 14. duplicate declare rejected ──────────────────────────
+    function test_Declare_duplicate_reverts() public {
+        bytes32 jobId = keccak256("job15");
+        _declare(jobId, 8, ConditionalEscrow.Op.LTE, 0);
+        bytes memory sig = _sign(8, ConditionalEscrow.Op.LTE, 0);
+        vm.prank(provider);
+        vm.expectRevert(abi.encodeWithSelector(ConditionalEscrow.JobExists.selector, jobId));
+        escrow.declare(jobId, ASSET, 8, ConditionalEscrow.Op.LTE, 0, BOND, PREMIUM, sig);
+    }
+
+    // ── 15. double purchase rejected ────────────────────────────
+    function test_Purchase_twice_reverts() public {
+        bytes32 jobId = keccak256("job16");
+        _open(jobId, 8, ConditionalEscrow.Op.LTE, 0);
+        vm.prank(consumer);
+        vm.expectRevert(abi.encodeWithSelector(ConditionalEscrow.AlreadyPurchased.selector, jobId));
+        escrow.purchase(jobId);
+    }
+
+    // ── 16. purchase of undeclared job rejected ─────────────────
+    function test_Purchase_notDeclared_reverts() public {
+        bytes32 jobId = keccak256("job17");
+        vm.prank(consumer);
+        vm.expectRevert(abi.encodeWithSelector(ConditionalEscrow.NotDeclared.selector, jobId));
+        escrow.purchase(jobId);
+    }
+
+    // ── 17. double settle rejected ──────────────────────────────
+    function test_Settle_twice_reverts() public {
+        bytes32 jobId = keccak256("job18");
+        _open(jobId, 8, ConditionalEscrow.Op.LTE, 0);
         vm.warp(block.timestamp + 8 hours + 1);
         _postRealized(jobId, -1);
         escrow.settle(jobId);
-        vm.expectRevert(abi.encodeWithSelector(ConditionalEscrow.NotOpen.selector, jobId));
+        vm.expectRevert(abi.encodeWithSelector(ConditionalEscrow.NotPurchased.selector, jobId));
         escrow.settle(jobId);
     }
 
-    // ── 9. boundary: GTE/LTE at exact threshold (inclusive) ─────
-    function test_Release_LTE_atBoundary() public {
-        bytes32 jobId = keccak256("job12");
-        _commit(jobId, 8, ConditionalEscrow.Op.LTE, 7);
+    // ── 18. boundary: LTE at exact threshold (inclusive -> met) ─
+    function test_Met_LTE_atBoundary() public {
+        bytes32 jobId = keccak256("job19");
+        uint256 provBefore = usdc.balanceOf(provider);
+        _open(jobId, 8, ConditionalEscrow.Op.LTE, 7);
         vm.warp(block.timestamp + 8 hours + 1);
         _postRealized(jobId, 7); // 7 <= 7 inclusive -> met
         escrow.settle(jobId);
-        assertEq(usdc.balanceOf(provider), AMOUNT, "boundary inclusive -> release");
+        assertEq(usdc.balanceOf(provider), provBefore + PREMIUM, "boundary inclusive -> met");
     }
 }
