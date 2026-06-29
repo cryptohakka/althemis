@@ -294,14 +294,14 @@
       <div class="card">
         <div class="card-head">
           <h2>Conditional contracts
-            <span class="hint"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6B7C99" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3z"/></svg>predictions sold as contracts, not graded forecasts</span>
+            <span class="hint"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6B7C99" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3z"/></svg>bonded conditional commitments — a provider posts a reserve, a consumer buys a claim</span>
           </h2>
         </div>
         <table class="led">
           <thead>
             <tr>
               <th>Provider</th><th>Asset</th><th>Window</th><th>Condition</th>
-              <th class="num">Price</th><th>Deadline</th><th>Outcome</th>
+              <th class="num">Premium / Reserve</th><th>Deadline</th><th>Outcome</th>
             </tr>
           </thead>
           <tbody id="conditional-tbody"></tbody>
@@ -310,7 +310,7 @@
           <span id="conditional-foot-summary">—</span>
         </div>
       </div>
-      <p class="caveat">A Provider declares a verifiable, measurable condition (e.g. "BTC funding rate ≤ X within 8h") and the Consumer escrows payment. At the deadline, anyone can settle: the realized value is read from public data, and the contract either releases payment to the Provider (condition met) or refunds the Consumer (condition not met) — deterministically, with no grading of predictive skill. Settlement runs on <code>ConditionalEscrow</code>, a contract independent of BondHook — a fabricated <b>fact</b> is still slashed within minutes elsewhere on this dashboard; a missed <b>condition</b> here is simply refunded at the deadline.</p>
+      <p class="caveat">A Provider posts a <b>reserve</b> behind a verifiable, measurable condition (e.g. "BTC funding rate ≤ X within 8h"); a Consumer pays a <b>premium</b> to buy a claim on that reserve. At the deadline, anyone can settle: the realized value is read from public data, and the contract either <b>returns the reserve to the Provider and pays it the premium</b> (condition met) or <b>pays the reserve out to the Consumer</b> (condition missed), with the Provider keeping the premium either way — deterministically, with no grading of predictive skill. This is not a slash: a miss is a loss, not a lie. Settlement runs on <code>ConditionalEscrow</code>, independent of BondHook. Like the rest of this demo, both sides are the operator's own roster (PCHEAP posts and bonds, CBUYER buys) — there are no external paying agents yet, disclosed as Layer 3 in the README.</p>
     </section>
   </div>
 
@@ -425,8 +425,9 @@
     }).join('');
   }
   function conditionalOutcomeBadge(outcome) {
-    if (outcome === 'released') return '<span class="st completed">Released</span>';
-    if (outcome === 'refunded') return '<span class="st rejected">Refunded</span>';
+    if (outcome === 'released') return '<span class="st completed">Met · released</span>';
+    if (outcome === 'paidout') return '<span class="st slashed">Missed · paid out</span>';
+    if (outcome === 'withdrawn') return '<span class="st funded">No buyer · withdrawn</span>';
     return '<span class="st pending">Pending</span>';
   }
   function fmtFR(fixed) {
@@ -448,7 +449,9 @@
     }
     cBody.innerHTML = condJobs.map(j => {
       const condition = `FR ${j.op === 'LTE' ? '≤' : '≥'} ${fmtFR(j.expected)}`;
-      const priceHtml = j.amount ? (Number(j.amount) / 1e6).toFixed(3) + ' USDC' : '—';
+      const premiumStr = j.premium ? (Number(j.premium) / 1e6).toFixed(3) : '—';
+      const bondStr = j.bond ? (Number(j.bond) / 1e6).toFixed(3) : '—';
+      const priceHtml = premiumStr + ' <small style="color:var(--muted)">/ reserve ' + bondStr + '</small>';
       return `
         <tr>
           <td><span class="pname">${j.provider || '—'}</span></td>
