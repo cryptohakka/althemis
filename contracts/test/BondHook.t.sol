@@ -324,7 +324,7 @@ contract BondHookTest is Test {
     // 4. Slash — 80/20 split, balances, events
     // ══════════════════════════════════════════════════════════
 
-    function test_Slash_ConsumerFull_TreasuryRemainder() public {
+    function test_Slash_TreasuryFull_ConsumerRefundedByCore() public {
         _deposit(2 * USDC_1);
         _fundJob(1, USDC_1); // locks 2 USDC
 
@@ -335,9 +335,10 @@ contract BondHookTest is Test {
         core.driveAfterReject(1, hook.SLASH_REASON());
 
         // budget = 1 USDC, lockAmt = 2 USDC (Bronze 200%).
-        // consumer = budget (100%), treasury = lockAmt - budget, challenger = 0.
-        assertEq(usdc.balanceOf(consumer), USDC_1);            // 1.0 USDC (full price)
-        assertEq(usdc.balanceOf(treasury), lockAmt - USDC_1);  // 1.0 USDC (remainder)
+        // Consumer is NOT paid by this hook (Core's reject() already refunds
+        // budget separately); treasury gets the full lockAmt, challenger = 0.
+        assertEq(usdc.balanceOf(consumer), 0);                 // not paid by hook
+        assertEq(usdc.balanceOf(treasury), lockAmt);           // full penalty
         assertEq(hook.bondBalance(provider), 0);
         assertEq(hook.bondLocked(provider), 0);
         assertEq(hook.jobBondLocked(1), 0);
@@ -352,9 +353,10 @@ contract BondHookTest is Test {
         _fundJob(1, USDC_1);          // budget 1 USDC, locks 1.1 USDC at 110%
         uint256 lockAmt = (USDC_1 * MIN_BPS) / 10000; // 1.1 USDC
         core.driveAfterReject(1, hook.SLASH_REASON());
-        // consumer = budget (100%), treasury = lockAmt - budget (10%), challenger = 0
-        assertEq(usdc.balanceOf(consumer), USDC_1);
-        assertEq(usdc.balanceOf(treasury), lockAmt - USDC_1);
+        // Consumer is NOT paid by this hook (Core already refunded budget);
+        // treasury gets the full lockAmt at the 110% floor, challenger = 0.
+        assertEq(usdc.balanceOf(consumer), 0);
+        assertEq(usdc.balanceOf(treasury), lockAmt);
         assertEq(hook.bondBalance(provider), 0);
     }
 
@@ -480,10 +482,11 @@ contract BondHookTest is Test {
         vm.prank(rando);
         hook.challenge(1);
 
-        // consumer 100% of price, challenger 10% of price, treasury remainder, stake returned
-        assertEq(usdc.balanceOf(consumer), USDC_1);                 // full price
+        // Consumer NOT paid by this hook (Core already refunded budget on
+        // reject); challenger 10% of price, treasury remainder, stake returned.
+        assertEq(usdc.balanceOf(consumer), 0);
         assertEq(usdc.balanceOf(rando), (USDC_1/10) + stake);       // 10% reward + stake returned = 0.2
-        assertEq(usdc.balanceOf(treasury), lockAmt - USDC_1 - (USDC_1/10)); // remainder
+        assertEq(usdc.balanceOf(treasury), lockAmt - (USDC_1/10));  // remainder (no consumer cut)
         assertEq(hook.jobBondLocked(1), 0);
     }
 
@@ -501,7 +504,8 @@ contract BondHookTest is Test {
 
         vm.prank(rando);
         hook.challenge(2);
-        assertEq(usdc.balanceOf(consumer), USDC_1);
+        // Consumer NOT paid by this hook (Core already refunded budget on reject).
+        assertEq(usdc.balanceOf(consumer), 0);
         assertEq(hook.jobBondLocked(2), 0);
     }
 

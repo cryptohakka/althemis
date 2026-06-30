@@ -63,10 +63,11 @@ interface IERC8183Core {
 // setProviderBondRate with the rate corresponding to verifiedCount=0
 // (reliability resets to Bronze). Skill axis is independent.
 //
-// Slash distribution (3-way): consumer 100% of price (always),
-// challenger 10% of price (deterministic permissionless challenge only;
-// 0 on oracle-initiated Phase A slash), treasury = remainder. The 110%
-// floor guarantees consumer(100%)+challenger(10%) always fit inside lockAmt.
+// Slash distribution (2-way): challenger 10% of price (deterministic
+// permissionless challenge only; 0 on oracle-initiated Phase A slash),
+// treasury = remainder. Consumer is made whole separately by Core's
+// standard reject() refund, not by this hook. The 110% floor guarantees
+// challenger(10%) always fits inside lockAmt with treasury taking the rest.
 // ──────────────────────────────────────────────────────────────
 contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -82,7 +83,7 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
     // Bond rate denominator and floor (basis points; 10000 = 100%)
     uint256 public constant BPS_DENOMINATOR  = 10000;
     uint256 public constant DEFAULT_BOND_RATE_BPS = 20000; // 200% — new provider
-    uint256 public constant MIN_BOND_RATE_BPS     = 11000; // 110% - consumer 100% + challenger 10%
+    uint256 public constant MIN_BOND_RATE_BPS     = 11000; // 110% - safety margin above challenger 10% + treasury remainder
 
     // New provider cap: budget-capped per job until graduation
     uint256 public constant NEW_PROVIDER_JOB_CAP    = 10;
@@ -292,7 +293,7 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
 
         if (reason == SLASH_REASON && lockAmt > 0 && provider != address(0)) {
             // Oracle-initiated slash (Phase A fabrication): no challenger.
-            // consumer 100% of price, treasury = remainder, challenger = 0.
+            // Consumer already refunded by Core's reject(); treasury = lockAmt, challenger = 0.
             _distributeSlash(jobId, jobBudget[jobId], address(0));
         } else {
             // No slash: just unlock (normal reject, e.g. prediction miss)
@@ -306,24 +307,26 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
         }
     }
 
-    // Slash distribution (3-way): consumer 100% of price (always),
-    // challenger 10% of price (deterministic challenge only; else 0),
-    // treasury = remainder. Floor 110% guarantees lockAmt >= 110% of price,
-    // so consumer(100%) + challenger(10%) <= lockAmt for every tier.
+    // Slash distribution (2-way): challenger 10% of price (deterministic
+    // challenge only; else 0), treasury = remainder. ERC8183 Core's reject()
+    // independently refunds `budget` to the consumer via its own standard
+    // escrow-return path, BEFORE this hook's afterAction fires — the consumer
+    // is therefore already made whole by Core. This distribution covers ONLY
+    // the bond penalty (lockAmt) and must not pay the consumer again, which
+    // would double-pay budget out of two independent fund sources (Core's
+    // escrow + this hook's locked bond).
     function _distributeSlash(uint256 jobId, uint256 budget, address challenger) internal {
         uint256 lockAmt  = jobBondLocked[jobId];
         address provider = jobProvider[jobId];
         address consumer = jobClient[jobId];
 
-        uint256 toConsumer   = budget;
         uint256 toChallenger = challenger != address(0) ? budget / 10 : 0;
-        uint256 toTreasury   = lockAmt - toConsumer - toChallenger;
+        uint256 toTreasury   = lockAmt - toChallenger;
 
         bondBalance[provider] -= lockAmt;
         bondLocked[provider]  -= lockAmt;
         delete jobBondLocked[jobId];
 
-        if (toConsumer   > 0) usdc.safeTransfer(consumer,   toConsumer);
         if (toChallenger > 0) usdc.safeTransfer(challenger, toChallenger);
         if (toTreasury   > 0) usdc.safeTransfer(treasury,   toTreasury);
         emit BondSlashed(jobId, provider, lockAmt, consumer, treasury);
@@ -334,8 +337,9 @@ contract BondHook is IERC8183Hook, ERC165, AccessControl, ReentrancyGuard {
     // still-locked job that is structurally invalid by on-chain state:
     //   (1) expired squatter: now > expiredAt && status in {Funded, Submitted}
     //   (6) post-expiry submit: submittedAt != 0 && submittedAt > expiredAt
-    // Stake = price/10. Holds => slash (consumer 100%, challenger 10%,
-    // treasury remainder) + stake returned. Fails => stake forfeited to treasury.
+    // Stake = price/10. Holds => slash (challenger 10%, treasury remainder;
+    // consumer already refunded by Core's reject()) + stake returned.
+    // Fails => stake forfeited to treasury.
     // Price/value claims are NOT challengeable here (oracle domain; v2).
     function challenge(uint256 jobId) external nonReentrant {
         uint256 lockAmt = jobBondLocked[jobId];
