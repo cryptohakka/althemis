@@ -32,7 +32,8 @@ const ASSET_BTC = 0;
 const WINDOW_HOURS = 8; // v1: match the existing FR_WINDOW_MS used elsewhere
 const CONDITIONAL_BOND_USDC    = process.env.CONDITIONAL_BOND_USDC    || '0.05';
 const CONDITIONAL_PREMIUM_USDC = process.env.CONDITIONAL_PREMIUM_USDC || '0.005';
-const FR_DECLARATION_OFFSET = parseFloat(process.env.FR_DECLARATION_OFFSET || '0.0001');
+const FR_DECLARATION_OFFSET = parseFloat(process.env.FR_DECLARATION_OFFSET || '0.0001'); // frSig.mad不在時のフォールバックのみ
+const FR_DECLARATION_MAD_MULTIPLIER = parseFloat(process.env.FR_DECLARATION_MAD_MULTIPLIER || '1.0');
 
 const CONDITIONAL_ESCROW_ABI = parseAbi([
   'function declare(bytes32 jobId, uint8 asset, uint8 window, uint8 op, int256 expected, uint256 bond, uint256 premium, bytes providerSig) external',
@@ -68,10 +69,14 @@ export async function tickConditional(roster, frSig, dec) {
   const provider = roster.PCHEAP; // most-reliable provider declares + bonds
   const consumer = roster.CBUYER; // reuse the existing autonomous-loop buyer wallet
 
-  // offset = 1x MAD: declare that the realized FR will clear the no-contest
-  // band by the deadline, in the direction the provider's z-score implies.
-  // This IS the Provider's stated boldness, not a derived statistic.
-  const offset = FR_DECLARATION_OFFSET;
+  // offset = N x temporal MAD (FR volatility over the trailing 24h window),
+  // falling back to FR_DECLARATION_OFFSET only when the baseline isn't ready
+  // yet (mad=0). This keeps the declared threshold scaled to how much FR
+  // actually moves, instead of a fixed constant that can drift out of range
+  // as market volatility changes.
+  const offset = (typeof frSig.mad === 'number' && frSig.mad > 0)
+    ? frSig.mad * FR_DECLARATION_MAD_MULTIPLIER
+    : FR_DECLARATION_OFFSET;
   let op, expected;
   if (frSig.direction === 'short') {
     op = 1; // LTE — Provider claims FR will fall to/below this line
