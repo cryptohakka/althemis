@@ -31,6 +31,18 @@ function saveJSON(path, data) {
   try { fs.writeFileSync(path, JSON.stringify(data, null, 2)); } catch {}
 }
 
+// ── 時系列MAD (FR宣言offsetの動的算出用。oracle.tsのmedianMadと同一ロジック) ──
+function medianMad(values) {
+  if (values.length === 0) return { median: 0, mad: 0 };
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  const deviations = sorted.map(v => Math.abs(v - median)).sort((a, b) => a - b);
+  const madMid = Math.floor(deviations.length / 2);
+  const mad = deviations.length % 2 === 0 ? (deviations[madMid - 1] + deviations[madMid]) / 2 : deviations[madMid];
+  return { median, mad };
+}
+
 // ── シグナル計算 (FR z-score逆張り + OI枯渇ゲート) ────────────────
 function calcDirectionSignal(sources, prevSources = [], frHistory = []) {
   const avgFR = sources.reduce((s, d) => s + d.fr, 0) / sources.length;
@@ -64,7 +76,7 @@ function calcDirectionSignal(sources, prevSources = [], frHistory = []) {
 
   if (!baselineReady) {
     console.log(`[fr-provider] baseline building (${frHistory.length}/20) — neutral`);
-    return { direction, strength, avgFR, oiMomentum, frZ, baselineReady, frRegime, extremeFactor };
+    return { direction, strength, avgFR, oiMomentum, frZ, baselineReady, frRegime, extremeFactor, mad: 0 };
   }
 
   const OI_BUILD = 0.003;   // OI激増中 → 逆張り見送り
@@ -82,13 +94,15 @@ function calcDirectionSignal(sources, prevSources = [], frHistory = []) {
     strength = (0.4 + zPart * 0.3 + oiBonus) * extremeFactor;
   }
 
+  const { mad: frMad } = medianMad(frHistory);
   return {
     direction,
     strength:   parseFloat(Math.min(strength, 1).toFixed(3)),
     avgFR,
     oiMomentum: parseFloat(oiMomentum.toFixed(6)),
     frZ:        parseFloat(frZ.toFixed(2)),
-    baselineReady, frRegime, extremeFactor
+    baselineReady, frRegime, extremeFactor,
+    mad: frMad
   };
 }
 
