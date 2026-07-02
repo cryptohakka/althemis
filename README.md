@@ -20,9 +20,9 @@ slashed, never even graded, but settled as a contract against public data.
 The novelty is the boundary, enforced by falsification discipline against our
 own signal, not just our competitors'.
 
-**[Demo Video](<URL>)** · **[Live Dashboard](https://althemis.a2aflow.space)** · **One-command repro:** `forge test` (50/50 passing: BondHook 31 + ConditionalEscrow 19)
+**[Demo Video](https://www.youtube.com/watch?v=OZZmefMe_OE)** · **[Live Dashboard](https://althemis.a2aflow.space)** · **One-command repro:** `forge test` (50/50 passing: BondHook 31 + ConditionalEscrow 19)
 
-**Proof:** autonomous slash on Arc Testnet — [`0x021e0422...`](https://testnet.arcscan.app/tx/0x021e0422d5752137eabdf3c1d0d90d93cfb71856216790230bdeb2c8cd44a8a8)
+**Proof:** autonomous slash on Arc Testnet — [`0x021e0422...`](https://testnet.arcscan.app/tx/0x08eb770716bfdecf16d6778c1d1cc2e93447f1bbe483aad50cfd36bda3beabfe)
 
 **Falsification discipline:** we built a probabilistic skill-scorer, measured it against an external harness, and retired it — the signal came back `NO_EDGE` and the mechanism had no buyer. We kept the evidence rather than quietly deleting it. ([details](#how-we-falsified-our-own-product))
 
