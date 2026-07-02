@@ -22,7 +22,7 @@ own signal, not just our competitors'.
 
 **[Demo Video](https://www.youtube.com/watch?v=OZZmefMe_OE)** · **[Live Dashboard](https://althemis.a2aflow.space)** · **One-command repro:** `forge test` (50/50 passing: BondHook 31 + ConditionalEscrow 19)
 
-**Proof:** autonomous slash on Arc Testnet — [`0x021e0422...`](https://testnet.arcscan.app/tx/0x08eb770716bfdecf16d6778c1d1cc2e93447f1bbe483aad50cfd36bda3beabfe)
+**Proof:** autonomous slash on Arc Testnet — [`0x08eb7707...`](https://testnet.arcscan.app/tx/0x08eb770716bfdecf16d6778c1d1cc2e93447f1bbe483aad50cfd36bda3beabfe)
 
 **Falsification discipline:** we built a probabilistic skill-scorer, measured it against an external harness, and retired it — the signal came back `NO_EDGE` and the mechanism had no buyer. We kept the evidence rather than quietly deleting it. ([details](#how-we-falsified-our-own-product))
 
